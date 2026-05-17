@@ -40,6 +40,17 @@ interface BackendProduct {
   is_active: boolean;
 }
 
+interface MaintenanceStatusResponse {
+  maintenance_mode: boolean;
+  access_granted: boolean;
+  maintenance_message?: string;
+}
+
+interface MaintenanceAccessResponse extends MaintenanceStatusResponse {
+  token?: string;
+  detail?: string;
+}
+
 const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, "") || "http://localhost:8000/api";
 
@@ -69,6 +80,17 @@ async function fetchJson<T>(path: string): Promise<T> {
     throw new Error(`Request failed with status ${response.status}`);
   }
   return response.json() as Promise<T>;
+}
+
+async function sendJson<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(`${API_BASE_URL}${path}`, init);
+  const data = (await response.json().catch(() => ({}))) as T & { detail?: string };
+
+  if (!response.ok) {
+    throw new Error(data.detail || `Request failed with status ${response.status}`);
+  }
+
+  return data as T;
 }
 
 function mapArtwork(artwork: BackendArtwork): Artwork {
@@ -139,4 +161,20 @@ export async function getProductCategories() {
 export async function getProducts() {
   const products = await fetchJson<BackendProduct[]>("/shop/products/");
   return products.map(mapProduct);
+}
+
+export async function getMaintenanceStatus(token?: string) {
+  return sendJson<MaintenanceStatusResponse>("/auth/maintenance-status/", {
+    headers: token ? { "X-Maintenance-Token": token } : undefined,
+  });
+}
+
+export async function requestMaintenanceAccess(accessKey: string) {
+  return sendJson<MaintenanceAccessResponse>("/auth/maintenance-access/", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ access_key: accessKey }),
+  });
 }
