@@ -12,19 +12,7 @@ export function Layout({ children }: LayoutProps) {
   return (
     <div className="min-h-screen flex flex-col selection:bg-neon-purple/30">
       <Navbar />
-      <main className="flex-grow pt-24">
-        <AnimatePresence mode="wait">
-          <motion.div
-            key={window.location.pathname}
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -10 }}
-            transition={{ duration: 0.4, ease: "easeOut" }}
-          >
-            {children}
-          </motion.div>
-        </AnimatePresence>
-      </main>
+      <main className="flex-grow pt-24">{children}</main>
       <Footer />
     </div>
   );

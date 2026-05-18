@@ -1,4 +1,4 @@
-import type { Artwork, Product, VideoClip } from "../types.ts";
+import type { Artwork, MockupRender, MockupTemplate, PlacementOverride, Product, VideoClip } from "../types.ts";
 
 interface BackendCategory {
   id: number;
@@ -40,6 +40,47 @@ interface BackendProduct {
   is_active: boolean;
 }
 
+interface BackendMockupTemplate {
+  id: number;
+  name: string;
+  slug: string;
+  product_type: string;
+  product_type_display: string;
+  description: string;
+  is_active: boolean;
+  base_image: string | null;
+  mask_image: string | null;
+  shadow_layer: string | null;
+  highlight_layer: string | null;
+  template_version: number;
+  config: Record<string, unknown>;
+  supported_colors: string[];
+  supported_sizes: string[];
+  updated_at: string;
+}
+
+interface BackendMockupRender {
+  id: number;
+  template: BackendMockupTemplate;
+  generated_image: number | null;
+  artwork: number | null;
+  source_image_url: string;
+  source_prompt: string;
+  variant_color: string;
+  variant_size: string;
+  placement_override?: PlacementOverride | null;
+  status: 'pending' | 'processing' | 'ready' | 'failed';
+  cache_key: string;
+  output_image: string | null;
+  output_image_url: string;
+  processing_notes: Record<string, unknown>;
+  error_message: string;
+  render_started_at: string | null;
+  render_completed_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 interface MaintenanceStatusResponse {
   maintenance_mode: boolean;
   access_granted: boolean;
@@ -49,6 +90,12 @@ interface MaintenanceStatusResponse {
 interface MaintenanceAccessResponse extends MaintenanceStatusResponse {
   token?: string;
   detail?: string;
+}
+
+interface MockupRenderMutationResponse {
+  created: boolean;
+  render: BackendMockupRender;
+  message: string;
 }
 
 const API_BASE_URL =
@@ -97,6 +144,7 @@ function mapArtwork(artwork: BackendArtwork): Artwork {
   const imageUrl = resolveAssetUrl(artwork.image) || artwork.image_url;
   return {
     id: String(artwork.id),
+    backendArtworkId: artwork.id,
     title: artwork.title,
     category: artwork.category.name,
     description: artwork.description,
@@ -133,6 +181,51 @@ function mapProduct(product: BackendProduct): Product {
   };
 }
 
+function mapMockupTemplate(template: BackendMockupTemplate): MockupTemplate {
+  return {
+    id: template.id,
+    name: template.name,
+    slug: template.slug,
+    productType: template.product_type,
+    productTypeDisplay: template.product_type_display,
+    description: template.description,
+    isActive: template.is_active,
+    baseImage: resolveAssetUrl(template.base_image),
+    maskImage: resolveAssetUrl(template.mask_image),
+    shadowLayer: resolveAssetUrl(template.shadow_layer),
+    highlightLayer: resolveAssetUrl(template.highlight_layer),
+    templateVersion: template.template_version,
+    config: template.config,
+    supportedColors: template.supported_colors,
+    supportedSizes: template.supported_sizes,
+    updatedAt: template.updated_at,
+  };
+}
+
+function mapMockupRender(render: BackendMockupRender): MockupRender {
+  return {
+    id: render.id,
+    template: mapMockupTemplate(render.template),
+    generatedImage: render.generated_image,
+    artwork: render.artwork,
+    sourceImageUrl: render.source_image_url,
+    sourcePrompt: render.source_prompt,
+    variantColor: render.variant_color,
+    variantSize: render.variant_size,
+    placementOverride: render.placement_override || null,
+    status: render.status,
+    cacheKey: render.cache_key,
+    outputImage: resolveAssetUrl(render.output_image),
+    outputImageUrl: resolveAssetUrl(render.output_image_url),
+    processingNotes: render.processing_notes,
+    errorMessage: render.error_message,
+    renderStartedAt: render.render_started_at,
+    renderCompletedAt: render.render_completed_at,
+    createdAt: render.created_at,
+    updatedAt: render.updated_at,
+  };
+}
+
 export async function getGalleryCategories() {
   const categories = await fetchJson<BackendCategory[]>("/gallery/categories/");
   return ["All", ...categories.map((category) => category.name)];
@@ -161,6 +254,46 @@ export async function getProductCategories() {
 export async function getProducts() {
   const products = await fetchJson<BackendProduct[]>("/shop/products/");
   return products.map(mapProduct);
+}
+
+export async function getMockupTemplates(productType?: string) {
+  const search = productType ? `?product_type=${encodeURIComponent(productType)}` : "";
+  const templates = await fetchJson<BackendMockupTemplate[]>(`/generator/mockup-templates/${search}`);
+  return templates.map(mapMockupTemplate);
+}
+
+export async function createMockupRender(input: {
+  generatedImageId?: number;
+  artworkId?: number;
+  sourceImageUrl?: string;
+  sourcePrompt?: string;
+  templateId: number;
+  variantColor?: string;
+  variantSize?: string;
+  placementOverride?: PlacementOverride;
+}) {
+  const response = await sendJson<MockupRenderMutationResponse>("/generator/mockup-renders/", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      generated_image_id: input.generatedImageId,
+      artwork_id: input.artworkId,
+      source_image_url: input.sourceImageUrl,
+      source_prompt: input.sourcePrompt,
+      template_id: input.templateId,
+      variant_color: input.variantColor,
+      variant_size: input.variantSize,
+      placement_override: input.placementOverride,
+    }),
+  });
+
+  return {
+    created: response.created,
+    message: response.message,
+    render: mapMockupRender(response.render),
+  };
 }
 
 export async function getMaintenanceStatus(token?: string) {

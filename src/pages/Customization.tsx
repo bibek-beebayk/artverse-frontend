@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate, Link, useLocation } from 'react-router-dom';
 import { useCart } from '../context/CartContext.tsx';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -12,14 +12,48 @@ import {
   ShieldCheck, 
   Truck, 
   Sparkles,
-  Info
+  Info,
+  Move,
+  Scaling
 } from 'lucide-react';
 import { cn } from '../lib/utils.ts';
 import { ImageModal } from '../components/Common.tsx';
+import { createMockupRender } from '../lib/api.ts';
+import type { ActiveCustomization, PlacementOverride } from '../types.ts';
+
+function normalizePlacement(placement: ActiveCustomization['basePlacement']): PlacementOverride | null {
+  if (!placement) {
+    return null;
+  }
+
+  const x = Number(placement.x);
+  const y = Number(placement.y);
+  const width = Number(placement.width);
+  const height = Number(placement.height);
+
+  if ([x, y, width, height].some((value) => Number.isNaN(value))) {
+    return null;
+  }
+
+  return { x, y, width, height };
+}
 
 export function Customization() {
-  const { activeCustomization, addToCart } = useCart();
+  const { activeCustomization, addToCart, setActiveCustomization } = useCart();
   const navigate = useNavigate();
+  const location = useLocation();
+  const routeCustomization = (location.state as { customization?: ActiveCustomization } | null)?.customization;
+  const customization = useMemo(() => {
+    const candidate = activeCustomization ?? routeCustomization ?? null;
+    if (!candidate) {
+      return null;
+    }
+
+    return {
+      ...candidate,
+      basePlacement: normalizePlacement(candidate.basePlacement),
+    };
+  }, [activeCustomization, routeCustomization]);
 
   const [selectedColour, setSelectedColour] = useState<string>('');
   const [selectedSize, setSelectedSize] = useState<string>('');
@@ -27,20 +61,115 @@ export function Customization() {
   const [isAdding, setIsAdding] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
+  const [previewImageUrl, setPreviewImageUrl] = useState<string>('');
+  const [previewRenderId, setPreviewRenderId] = useState<number | undefined>(undefined);
+  const [previewResolvedPlacement, setPreviewResolvedPlacement] = useState<{
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  } | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  const [offsetX, setOffsetX] = useState(0);
+  const [offsetY, setOffsetY] = useState(0);
+  const [scalePercent, setScalePercent] = useState(100);
+  const previewRequestSequence = useRef(0);
+
+  useEffect(() => {
+    if (!activeCustomization && routeCustomization) {
+      setActiveCustomization(routeCustomization);
+    }
+  }, [activeCustomization, routeCustomization, setActiveCustomization]);
 
   // Initialize selected defaults from active customization
   useEffect(() => {
-    if (activeCustomization) {
-      if (activeCustomization.colours && activeCustomization.colours.length > 0) {
-        setSelectedColour(activeCustomization.colours[0]);
+    if (customization) {
+      setPreviewImageUrl(customization.mockupImageUrl);
+      setPreviewResolvedPlacement(customization.basePlacement);
+      setOffsetX(0);
+      setOffsetY(0);
+      setScalePercent(100);
+      if (customization.colours && customization.colours.length > 0) {
+        setSelectedColour(customization.colours[0]);
       }
-      if (activeCustomization.sizes && activeCustomization.sizes.length > 0) {
-        setSelectedSize(activeCustomization.sizes[0]);
+      if (customization.sizes && customization.sizes.length > 0) {
+        setSelectedSize(customization.sizes[0]);
       }
     }
-  }, [activeCustomization]);
+  }, [customization]);
 
-  if (!activeCustomization) {
+  useEffect(() => {
+    if (!customization || !selectedColour || !selectedSize) {
+      return;
+    }
+
+    let isCancelled = false;
+    const requestSequence = ++previewRequestSequence.current;
+    const basePlacement = customization.basePlacement;
+    const placementOverride = basePlacement
+      ? {
+          x: Math.round(basePlacement.x + offsetX),
+          y: Math.round(basePlacement.y + offsetY),
+          width: Math.max(80, Math.round(basePlacement.width * (scalePercent / 100))),
+          height: Math.max(80, Math.round(basePlacement.height * (scalePercent / 100))),
+        }
+      : undefined;
+
+    const refreshPreview = async () => {
+      setPreviewLoading(true);
+      setPreviewError(null);
+
+      try {
+        const response = await createMockupRender({
+          templateId: customization.templateId,
+          artworkId: customization.sourceArtworkId,
+          sourceImageUrl: customization.imageUrl,
+          sourcePrompt: customization.userPrompt,
+          variantColor: selectedColour,
+          variantSize: selectedSize,
+          placementOverride,
+        });
+
+        if (isCancelled) {
+          return;
+        }
+        if (requestSequence !== previewRequestSequence.current) {
+          return;
+        }
+
+        setPreviewImageUrl(
+          response.render.outputImage || response.render.outputImageUrl || customization.mockupImageUrl
+        );
+        setPreviewRenderId(response.render.id);
+        setPreviewResolvedPlacement(placementOverride ?? customization.basePlacement);
+      } catch (renderError) {
+        if (isCancelled) {
+          return;
+        }
+        if (requestSequence !== previewRequestSequence.current) {
+          return;
+        }
+        console.error('Failed to refresh mockup preview:', renderError);
+        setPreviewError('Preview update failed. Showing the last available render.');
+      } finally {
+        if (!isCancelled && requestSequence === previewRequestSequence.current) {
+          setPreviewLoading(false);
+        }
+      }
+    };
+
+    const debounceTimeout = window.setTimeout(() => {
+      void refreshPreview();
+    }, 120);
+
+    return () => {
+      isCancelled = true;
+      window.clearTimeout(debounceTimeout);
+    };
+  }, [customization, offsetX, offsetY, scalePercent, selectedColour, selectedSize]);
+
+  if (!customization) {
     return (
       <div className="max-w-7xl mx-auto px-6 py-32 text-center text-white">
         <h2 className="text-3xl font-display font-black text-white uppercase tracking-widest mb-4">No Customization Selected</h2>
@@ -53,7 +182,7 @@ export function Customization() {
   }
 
   // Render product preview configuration based on choices
-  const totalPrice = (activeCustomization.basePrice * quantity).toFixed(2);
+  const totalPrice = (customization.basePrice * quantity).toFixed(2);
 
   const handleConfirmAddToCart = () => {
     setIsAdding(true);
@@ -61,15 +190,26 @@ export function Customization() {
       const cartItemId = `cart-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
       addToCart({
         id: cartItemId,
-        generatedArtworkId: activeCustomization.artworkId,
-        productType: activeCustomization.productType,
-        mockupImageUrl: activeCustomization.mockupImageUrl,
+        generatedArtworkId: customization.artworkId,
+        sourceArtworkId: customization.sourceArtworkId,
+        productType: customization.productType,
+        mockupImageUrl: previewImageUrl || customization.mockupImageUrl,
         selectedSize: selectedSize,
         selectedColour: selectedColour,
         quantity: quantity,
-        price: activeCustomization.basePrice,
-        userPrompt: activeCustomization.userPrompt,
-        originalImageUrl: activeCustomization.imageUrl
+        price: customization.basePrice,
+        templateId: customization.templateId,
+        backendRenderId: previewRenderId,
+        placementOverride: customization.basePlacement
+          ? {
+              x: Math.round(customization.basePlacement.x + offsetX),
+              y: Math.round(customization.basePlacement.y + offsetY),
+              width: Math.max(80, Math.round(customization.basePlacement.width * (scalePercent / 100))),
+              height: Math.max(80, Math.round(customization.basePlacement.height * (scalePercent / 100))),
+            }
+          : undefined,
+        userPrompt: customization.userPrompt,
+        originalImageUrl: customization.imageUrl
       });
 
       setIsAdding(false);
@@ -103,10 +243,10 @@ export function Customization() {
             <div className="absolute inset-0 bg-gradient-to-tr from-cyber-black/80 to-white/5 pointer-events-none" />
             
             {/* Dynamic Product Renderings with user image nested */}
-            {activeCustomization.productType === 'Digital Wallpaper' ? (
+            {customization.productType === 'Digital Wallpaper' ? (
               <div className="relative w-full aspect-[16/10] bg-cyber-black border-4 border-gray-800 rounded-xl overflow-hidden shadow-2xl flex items-center justify-center">
                 <img 
-                  src={activeCustomization.imageUrl} 
+                  src={previewImageUrl || customization.imageUrl} 
                   alt="Desktop Wallpaper display" 
                   className="absolute w-full h-full object-cover"
                 />
@@ -114,50 +254,35 @@ export function Customization() {
                   UHD 8K DIGITAL PREVIEW
                 </div>
               </div>
-            ) : activeCustomization.productType === 'Canvas Print' || activeCustomization.productType === 'Poster' ? (
+            ) : customization.productType === 'Canvas Print' || customization.productType === 'Poster' ? (
               <div 
                 className={cn(
                   "relative bg-white shadow-2xl transition-all duration-300 transform rounded-sm border-b-8 border-r-8 border-black/80",
-                  activeCustomization.productType === 'Poster' ? "w-64 h-80" : "w-72 h-72"
+                  customization.productType === 'Poster' ? "w-64 h-80" : "w-72 h-72"
                 )}
                 style={{
                   boxShadow: '0 30px 60px -12px rgba(0,0,0,0.9), 0 18px 36px -18px rgba(0,0,0,0.9)'
                 }}
               >
                 <img 
-                  src={activeCustomization.imageUrl} 
+                  src={previewImageUrl || customization.imageUrl} 
                   alt="Generated artwork nested inside frame" 
                   className="w-full h-full object-cover"
                 />
-                {activeCustomization.productType === 'Poster' && (
+                {customization.productType === 'Poster' && (
                   <div className="absolute inset-0 border-8 border-black/90 pointer-events-none" />
                 )}
               </div>
             ) : (
               // Structured overlays for mug, apparel, accessories
               <div className="relative w-full h-full flex items-center justify-center">
-                {/* Backdrop Template item */}
                 <img 
-                  src={activeCustomization.mockupImageUrl} 
-                  alt={activeCustomization.productType} 
+                  src={previewImageUrl || customization.mockupImageUrl} 
+                  alt={customization.productType} 
                   className={cn(
-                    "w-80 h-80 object-contain selection-none pointer-events-none transition-all duration-500 mix-blend-screen opacity-15 absolute"
+                    "w-full h-full object-contain selection-none pointer-events-none transition-all duration-500"
                   )}
                 />
-                {/* Embedded generated image with realistic wrapping */}
-                <div 
-                  className={cn(
-                    "relative z-10 w-24 h-24 overflow-hidden rounded-md border border-white/10 shadow-lg transform rotate-2",
-                    selectedColour === 'Midnight Black' && "shadow-[0_0_20px_rgba(0,0,0,0.8)]",
-                    selectedColour === 'Cyber Neon Pink' && "border-neon-pink/40 shadow-[0_0_15px_rgba(255,0,127,0.2)]"
-                  )}
-                >
-                  <img 
-                    src={activeCustomization.imageUrl} 
-                    alt="Wrapping overlay artwork" 
-                    className="w-full h-full object-cover"
-                  />
-                </div>
               </div>
             )}
 
@@ -174,7 +299,33 @@ export function Customization() {
 
             <div className="absolute bottom-6 left-6 bg-cyber-black/80 border border-white/5 rounded-lg px-3 py-1.5 flex items-center gap-2">
               <Layers size={14} className="text-neon-blue animate-pulse" />
-              <span className="text-[9px] font-mono tracking-widest text-[#9ca3af] uppercase">Mock System Engine 1.5</span>
+              <span className="text-[9px] font-mono tracking-widest text-[#9ca3af] uppercase">
+                {previewLoading ? 'Rendering backend preview' : 'Backend mockup render active'}
+              </span>
+            </div>
+          </div>
+
+          {previewError && (
+            <div className="rounded-2xl border border-neon-pink/30 bg-neon-pink/10 px-4 py-3 text-sm text-neon-pink">
+              {previewError}
+            </div>
+          )}
+
+          <div className="rounded-2xl border border-white/10 bg-cyber-black/70 px-4 py-4 text-[10px] uppercase tracking-widest text-gray-400 space-y-2">
+            <div className="flex items-center justify-between gap-4">
+              <span className="text-neon-blue font-bold">Preview Debug</span>
+              <span>{previewLoading ? 'Refreshing render' : 'Render settled'}</span>
+            </div>
+            <div className="grid grid-cols-2 gap-2 text-[9px]">
+              <span>X: {previewResolvedPlacement?.x ?? 'n/a'}</span>
+              <span>Y: {previewResolvedPlacement?.y ?? 'n/a'}</span>
+              <span>Width: {previewResolvedPlacement?.width ?? 'n/a'}</span>
+              <span>Height: {previewResolvedPlacement?.height ?? 'n/a'}</span>
+              <span>Scale: {scalePercent}%</span>
+              <span>Render ID: {previewRenderId ?? 'n/a'}</span>
+            </div>
+            <div className="border-t border-white/5 pt-2 text-[9px] break-all normal-case tracking-normal text-gray-500">
+              Preview URL: {previewImageUrl || 'n/a'}
             </div>
           </div>
 
@@ -192,21 +343,96 @@ export function Customization() {
               Configuration Module
             </span>
             <h1 className="text-4xl font-display font-black uppercase tracking-widest text-white mb-2">
-              {activeCustomization.productType} Setup
+              {customization.productType} Setup
             </h1>
             <p className="text-xs text-gray-400 leading-relaxed uppercase tracking-wider max-w-md pb-6 border-b border-white/5">
-              Customized wrapping of prompt creation: <span className="text-white">"{activeCustomization.userPrompt}"</span>. Your specifications map straight into stateful print queues.
+              Customized wrapping of prompt creation: <span className="text-white">"{customization.userPrompt}"</span>. Your specifications map straight into stateful print queues.
             </p>
 
             <div className="space-y-8 py-8">
+              {customization.basePlacement && (
+                <div className="space-y-6 border-b border-white/5 pb-8">
+                  <div>
+                    <label className="flex items-center gap-2 text-[8px] font-bold text-gray-400 uppercase tracking-[0.3em] mb-3">
+                      <Move size={12} />
+                      Design Position
+                    </label>
+                    <div className="grid grid-cols-1 gap-4">
+                      <div>
+                        <div className="flex items-center justify-between text-[9px] uppercase tracking-widest text-gray-500 mb-2">
+                          <span>Horizontal</span>
+                          <span>{offsetX > 0 ? `+${offsetX}` : offsetX}px</span>
+                        </div>
+                        <input
+                          type="range"
+                          min={-280}
+                          max={280}
+                          step={10}
+                          value={offsetX}
+                          onChange={(event) => setOffsetX(Number(event.target.value))}
+                          className="w-full accent-[var(--color-neon-blue)]"
+                        />
+                      </div>
+                      <div>
+                        <div className="flex items-center justify-between text-[9px] uppercase tracking-widest text-gray-500 mb-2">
+                          <span>Vertical</span>
+                          <span>{offsetY > 0 ? `+${offsetY}` : offsetY}px</span>
+                        </div>
+                        <input
+                          type="range"
+                          min={-320}
+                          max={320}
+                          step={10}
+                          value={offsetY}
+                          onChange={(event) => setOffsetY(Number(event.target.value))}
+                          className="w-full accent-[var(--color-neon-purple)]"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="flex items-center gap-2 text-[8px] font-bold text-gray-400 uppercase tracking-[0.3em] mb-3">
+                      <Scaling size={12} />
+                      Design Size
+                    </label>
+                    <div className="flex items-center justify-between text-[9px] uppercase tracking-widest text-gray-500 mb-2">
+                      <span>Scale</span>
+                      <span>{scalePercent}%</span>
+                    </div>
+                    <input
+                      type="range"
+                      min={35}
+                      max={220}
+                      step={5}
+                      value={scalePercent}
+                      onChange={(event) => setScalePercent(Number(event.target.value))}
+                      className="w-full accent-[var(--color-neon-pink)]"
+                    />
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setOffsetX(0);
+                      setOffsetY(0);
+                      setScalePercent(100);
+                    }}
+                    className="px-4 py-2 text-[9px] font-extrabold uppercase tracking-widest rounded-lg border border-white/10 bg-white/5 text-gray-300 hover:text-white hover:border-white/20 transition-all"
+                  >
+                    Reset Placement
+                  </button>
+                </div>
+              )}
+
               {/* Change Product Colours if available */}
-              {activeCustomization.colours && activeCustomization.colours.length > 0 && (
+              {customization.colours && customization.colours.length > 0 && (
                 <div>
                   <label className="block text-[8px] font-bold text-gray-400 uppercase tracking-[0.3em] mb-3">
                     Select Product Shade
                   </label>
                   <div className="flex flex-wrap gap-3">
-                    {activeCustomization.colours.map((colour) => (
+                    {customization.colours.map((colour) => (
                       <button
                         key={colour}
                         onClick={() => setSelectedColour(colour)}
@@ -225,13 +451,13 @@ export function Customization() {
               )}
 
               {/* Selection Sizes if available */}
-              {activeCustomization.sizes && activeCustomization.sizes.length > 0 && (
+              {customization.sizes && customization.sizes.length > 0 && (
                 <div>
                   <label className="block text-[8px] font-bold text-gray-400 uppercase tracking-[0.3em] mb-3">
                     Choose Dimensions / Size
                   </label>
                   <div className="flex flex-wrap gap-3">
-                    {activeCustomization.sizes.map((size) => (
+                    {customization.sizes.map((size) => (
                       <button
                         key={size}
                         onClick={() => setSelectedSize(size)}
@@ -337,8 +563,8 @@ export function Customization() {
       <ImageModal 
         isOpen={isPreviewOpen}
         onClose={() => setIsPreviewOpen(false)}
-        imageUrl={activeCustomization.imageUrl}
-        title={`Vision: ${activeCustomization.userPrompt}`}
+        imageUrl={previewImageUrl || customization.imageUrl}
+        title={`Vision: ${customization.userPrompt}`}
       />
     </div>
   );

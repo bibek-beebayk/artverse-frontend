@@ -1,5 +1,5 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
-import { CartItem, GeneratedArtwork, AvailableMockupProduct } from '../types.ts';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { ActiveCustomization, CartItem, GeneratedArtwork } from '../types.ts';
 
 interface CartContextType {
   cart: CartItem[];
@@ -7,17 +7,8 @@ interface CartContextType {
   removeFromCart: (itemId: string) => void;
   updateCartQuantity: (itemId: string, quantity: number) => void;
   clearCart: () => void;
-  activeCustomization: {
-    artworkId: string;
-    userPrompt: string;
-    imageUrl: string;
-    productType: string;
-    mockupImageUrl: string;
-    basePrice: number;
-    sizes: string[];
-    colours: string[];
-  } | null;
-  setActiveCustomization: (customization: CartContextType['activeCustomization']) => void;
+  activeCustomization: ActiveCustomization | null;
+  setActiveCustomization: (customization: ActiveCustomization | null) => void;
   generatedArtworks: GeneratedArtwork[];
   addGeneratedArtwork: (artwork: GeneratedArtwork) => void;
   getRecommendations: (items: CartItem[]) => {
@@ -38,7 +29,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     return local ? JSON.parse(local) : [];
   });
 
-  const [activeCustomization, setActiveCustomizationState] = useState<CartContextType['activeCustomization']>(() => {
+  const [activeCustomization, setActiveCustomizationState] = useState<ActiveCustomization | null>(() => {
     const local = localStorage.getItem('artverse_active_customization');
     return local ? JSON.parse(local) : null;
   });
@@ -64,12 +55,13 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     localStorage.setItem('artverse_generated_artworks', JSON.stringify(generatedArtworks));
   }, [generatedArtworks]);
 
-  const addToCart = (newItem: CartItem) => {
+  const addToCart = useCallback((newItem: CartItem) => {
     setCart((prev) => {
       // Check if exact same item exists (same artwork, same productType, size, and colour)
       const existingIdx = prev.findIndex(
         (item) =>
           item.generatedArtworkId === newItem.generatedArtworkId &&
+          item.sourceArtworkId === newItem.sourceArtworkId &&
           item.productType === newItem.productType &&
           item.selectedSize === newItem.selectedSize &&
           item.selectedColour === newItem.selectedColour
@@ -82,38 +74,50 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       }
       return [...prev, newItem];
     });
-  };
+  }, []);
 
-  const removeFromCart = (itemId: string) => {
+  const removeFromCart = useCallback((itemId: string) => {
     setCart((prev) => prev.filter((item) => item.id !== itemId));
-  };
+  }, []);
 
-  const updateCartQuantity = (itemId: string, quantity: number) => {
+  const updateCartQuantity = useCallback((itemId: string, quantity: number) => {
     setCart((prev) =>
       prev.map((item) => (item.id === itemId ? { ...item, quantity: Math.max(1, quantity) } : item))
     );
-  };
+  }, []);
 
-  const clearCart = () => {
+  const clearCart = useCallback(() => {
     setCart([]);
-  };
+  }, []);
 
-  const setActiveCustomization = (customization: CartContextType['activeCustomization']) => {
+  const setActiveCustomization = useCallback((customization: ActiveCustomization | null) => {
+    if (customization) {
+      localStorage.setItem('artverse_active_customization', JSON.stringify(customization));
+    } else {
+      localStorage.removeItem('artverse_active_customization');
+    }
     setActiveCustomizationState(customization);
-  };
+  }, []);
 
-  const addGeneratedArtwork = (artwork: GeneratedArtwork) => {
+  const addGeneratedArtwork = useCallback((artwork: GeneratedArtwork) => {
     setGeneratedArtworks((prev) => {
-      // Filter duplicates by ID
-      if (prev.some((art) => art.id === artwork.id)) {
-        return prev;
+      const existingIndex = prev.findIndex((art) => art.id === artwork.id);
+      if (existingIndex > -1) {
+        const currentArtwork = prev[existingIndex];
+        if (JSON.stringify(currentArtwork) === JSON.stringify(artwork)) {
+          return prev;
+        }
+
+        const updated = [...prev];
+        updated[existingIndex] = artwork;
+        return updated;
       }
       return [artwork, ...prev];
     });
-  };
+  }, []);
 
   // Up-sell Recommendation Logic
-  const getRecommendations = (cartItems: CartItem[]) => {
+  const getRecommendations = useCallback((cartItems: CartItem[]) => {
     if (cartItems.length === 0) return [];
 
     // Prioritize recommending products matching the most recently added item's artwork
@@ -169,23 +173,37 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
         userPrompt: promptText,
       };
     });
-  };
+  }, [generatedArtworks]);
+
+  const value = useMemo(
+    () => ({
+      cart,
+      addToCart,
+      removeFromCart,
+      updateCartQuantity,
+      clearCart,
+      activeCustomization,
+      setActiveCustomization,
+      generatedArtworks,
+      addGeneratedArtwork,
+      getRecommendations,
+    }),
+    [
+      cart,
+      addToCart,
+      removeFromCart,
+      updateCartQuantity,
+      clearCart,
+      activeCustomization,
+      setActiveCustomization,
+      generatedArtworks,
+      addGeneratedArtwork,
+      getRecommendations,
+    ]
+  );
 
   return (
-    <CartContext.Provider
-      value={{
-        cart,
-        addToCart,
-        removeFromCart,
-        updateCartQuantity,
-        clearCart,
-        activeCustomization,
-        setActiveCustomization,
-        generatedArtworks,
-        addGeneratedArtwork,
-        getRecommendations,
-      }}
-    >
+    <CartContext.Provider value={value}>
       {children}
     </CartContext.Provider>
   );

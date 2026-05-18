@@ -8,6 +8,7 @@ import { BrowserRouter as Router, Routes, Route, useLocation } from 'react-route
 import { Layout } from './components/Common.tsx';
 import { AuthProvider } from './context/AuthContext.tsx';
 import { CartProvider } from './context/CartContext.tsx';
+import { Customization } from './pages/Customization.tsx';
 
 const Home = lazy(() => import('./pages/Home.tsx').then((module) => ({ default: module.Home })));
 const Gallery = lazy(() => import('./pages/Gallery.tsx').then((module) => ({ default: module.Gallery })));
@@ -17,7 +18,6 @@ const Contact = lazy(() => import('./pages/Contact.tsx').then((module) => ({ def
 const Shop = lazy(() => import('./pages/Shop.tsx').then((module) => ({ default: module.Shop })));
 const Favorites = lazy(() => import('./pages/Favorites.tsx').then((module) => ({ default: module.Favorites })));
 const Generator = lazy(() => import('./pages/Generator.tsx').then((module) => ({ default: module.Generator })));
-const Customization = lazy(() => import('./pages/Customization.tsx').then((module) => ({ default: module.Customization })));
 const CartPage = lazy(() => import('./pages/CartPage.tsx').then((module) => ({ default: module.CartPage })));
 const CollectionDetail = lazy(() => import('./pages/CollectionDetail.tsx').then((module) => ({ default: module.CollectionDetail })));
 
@@ -41,25 +41,31 @@ function RouteFallback() {
 
 function PageRoutes() {
   return (
+    <Layout>
+      <Suspense fallback={<RouteFallback />}>
+        <Routes>
+          <Route path="/" element={<Home />} />
+          <Route path="/gallery" element={<Gallery />} />
+          <Route path="/videos" element={<Videos />} />
+          <Route path="/about" element={<About />} />
+          <Route path="/contact" element={<Contact />} />
+          <Route path="/shop" element={<Shop />} />
+          <Route path="/favorites" element={<Favorites />} />
+          <Route path="/generator" element={<Generator />} />
+          <Route path="/customize" element={<Customization />} />
+          <Route path="/cart" element={<CartPage />} />
+          <Route path="/collections/:collectionId" element={<CollectionDetail />} />
+        </Routes>
+      </Suspense>
+    </Layout>
+  );
+}
+
+function AppRouter() {
+  return (
     <Router>
       <ScrollToTop />
-      <Layout>
-        <Suspense fallback={<RouteFallback />}>
-          <Routes>
-            <Route path="/" element={<Home />} />
-            <Route path="/gallery" element={<Gallery />} />
-            <Route path="/videos" element={<Videos />} />
-            <Route path="/about" element={<About />} />
-            <Route path="/contact" element={<Contact />} />
-            <Route path="/shop" element={<Shop />} />
-            <Route path="/favorites" element={<Favorites />} />
-            <Route path="/generator" element={<Generator />} />
-            <Route path="/customize" element={<Customization />} />
-            <Route path="/cart" element={<CartPage />} />
-            <Route path="/collections/:collectionId" element={<CollectionDetail />} />
-          </Routes>
-        </Suspense>
-      </Layout>
+      <PageRoutes />
     </Router>
   );
 }
@@ -68,7 +74,7 @@ export default function App() {
   return (
     <AuthProvider>
       <CartProvider>
-        <PageRoutes />
+        <AppRouter />
       </CartProvider>
     </AuthProvider>
   );
