@@ -14,12 +14,30 @@ import {
   Sparkles,
   Info,
   Move,
-  Scaling
+  Scaling,
+  Crop
 } from 'lucide-react';
 import { cn } from '../lib/utils.ts';
 import { ImageModal } from '../components/Common.tsx';
 import { createMockupRender } from '../lib/api.ts';
-import type { ActiveCustomization, PlacementOverride } from '../types.ts';
+import type { ActiveCustomization, CropOverride, PlacementOverride } from '../types.ts';
+
+const MIN_CROP_SIZE = 12;
+const CROP_HANDLE_SIZE = 18;
+type CropHandle =
+  | 'move'
+  | 'n'
+  | 's'
+  | 'e'
+  | 'w'
+  | 'ne'
+  | 'nw'
+  | 'se'
+  | 'sw';
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(Math.max(value, min), max);
+}
 
 function normalizePlacement(placement: ActiveCustomization['basePlacement']): PlacementOverride | null {
   if (!placement) {
@@ -61,20 +79,33 @@ export function Customization() {
   const [isAdding, setIsAdding] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
-  const [previewImageUrl, setPreviewImageUrl] = useState<string>('');
   const [previewRenderId, setPreviewRenderId] = useState<number | undefined>(undefined);
-  const [previewResolvedPlacement, setPreviewResolvedPlacement] = useState<{
-    x: number;
-    y: number;
-    width: number;
-    height: number;
-  } | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [offsetX, setOffsetX] = useState(0);
   const [offsetY, setOffsetY] = useState(0);
   const [scalePercent, setScalePercent] = useState(100);
-  const previewRequestSequence = useRef(0);
+  const [isCropStudioOpen, setIsCropStudioOpen] = useState(false);
+  const [isCropDragging, setIsCropDragging] = useState(false);
+  const [appliedCropOverride, setAppliedCropOverride] = useState<CropOverride | null>(null);
+  const [draftCropRect, setDraftCropRect] = useState<CropOverride>({
+    left: 0,
+    top: 0,
+    width: 100,
+    height: 100,
+  });
+  const [cropStudioImageDimensions, setCropStudioImageDimensions] = useState<{ width: number; height: number } | null>(null);
+  const [templateDimensions, setTemplateDimensions] = useState<{ width: number; height: number } | null>(null);
+  const cropStageRef = useRef<HTMLDivElement | null>(null);
+  const cropDragState = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+    handle: CropHandle;
+    originRect: CropOverride;
+    width: number;
+    height: number;
+  } | null>(null);
 
   useEffect(() => {
     if (!activeCustomization && routeCustomization) {
@@ -85,11 +116,17 @@ export function Customization() {
   // Initialize selected defaults from active customization
   useEffect(() => {
     if (customization) {
-      setPreviewImageUrl(customization.mockupImageUrl);
-      setPreviewResolvedPlacement(customization.basePlacement);
+      setPreviewRenderId(undefined);
+      setPreviewLoading(false);
+      setPreviewError(null);
+      setTemplateDimensions(null);
+      setCropStudioImageDimensions(null);
       setOffsetX(0);
       setOffsetY(0);
       setScalePercent(100);
+      setIsCropStudioOpen(false);
+      setAppliedCropOverride(null);
+      setDraftCropRect({ left: 0, top: 0, width: 100, height: 100 });
       if (customization.colours && customization.colours.length > 0) {
         setSelectedColour(customization.colours[0]);
       }
@@ -99,75 +136,178 @@ export function Customization() {
     }
   }, [customization]);
 
-  useEffect(() => {
-    if (!customization || !selectedColour || !selectedSize) {
+  const previewResolvedPlacement = useMemo(() => {
+    if (!customization?.basePlacement) {
+      return null;
+    }
+
+    return {
+      x: Math.round(customization.basePlacement.x + offsetX),
+      y: Math.round(customization.basePlacement.y + offsetY),
+      width: Math.max(80, Math.round(customization.basePlacement.width * (scalePercent / 100))),
+      height: Math.max(80, Math.round(customization.basePlacement.height * (scalePercent / 100))),
+    };
+  }, [customization, offsetX, offsetY, scalePercent]);
+
+  const previewPlacementStyle = useMemo(() => {
+    if (!previewResolvedPlacement || !templateDimensions) {
+      return null;
+    }
+
+    return {
+      left: `${(previewResolvedPlacement.x / templateDimensions.width) * 100}%`,
+      top: `${(previewResolvedPlacement.y / templateDimensions.height) * 100}%`,
+      width: `${(previewResolvedPlacement.width / templateDimensions.width) * 100}%`,
+      height: `${(previewResolvedPlacement.height / templateDimensions.height) * 100}%`,
+    };
+  }, [previewResolvedPlacement, templateDimensions]);
+
+  const cropOverride = appliedCropOverride;
+  const hasAppliedCrop = Boolean(
+    appliedCropOverride &&
+    (
+      appliedCropOverride.left !== 0 ||
+      appliedCropOverride.top !== 0 ||
+      appliedCropOverride.width !== 100 ||
+      appliedCropOverride.height !== 100
+    )
+  );
+
+  const previewDesignImageStyle = useMemo(() => {
+    if (!appliedCropOverride) {
+      return undefined;
+    }
+
+    return {
+      width: `${100 / (appliedCropOverride.width / 100)}%`,
+      height: `${100 / (appliedCropOverride.height / 100)}%`,
+      left: `-${(appliedCropOverride.left / appliedCropOverride.width) * 100}%`,
+      top: `-${(appliedCropOverride.top / appliedCropOverride.height) * 100}%`,
+    };
+  }, [appliedCropOverride]);
+
+  const appliedCropAspectRatio = useMemo(() => {
+    if (!appliedCropOverride || !cropStudioImageDimensions) {
+      return null;
+    }
+
+    const croppedWidth = cropStudioImageDimensions.width * (appliedCropOverride.width / 100);
+    const croppedHeight = cropStudioImageDimensions.height * (appliedCropOverride.height / 100);
+    if (croppedWidth <= 0 || croppedHeight <= 0) {
+      return null;
+    }
+
+    return croppedWidth / croppedHeight;
+  }, [appliedCropOverride, cropStudioImageDimensions]);
+
+  const previewCropFrameStyle = useMemo(() => {
+    if (!hasAppliedCrop || !previewResolvedPlacement || !appliedCropAspectRatio) {
+      return null;
+    }
+
+    const placementAspectRatio = previewResolvedPlacement.width / previewResolvedPlacement.height;
+
+    if (appliedCropAspectRatio >= placementAspectRatio) {
+      return {
+        width: '100%',
+        aspectRatio: String(appliedCropAspectRatio),
+      };
+    }
+
+    return {
+      height: '100%',
+      aspectRatio: String(appliedCropAspectRatio),
+    };
+  }, [appliedCropAspectRatio, hasAppliedCrop, previewResolvedPlacement]);
+
+  const draftCropPreviewStyle = useMemo(() => ({
+    width: `${100 / (draftCropRect.width / 100)}%`,
+    height: `${100 / (draftCropRect.height / 100)}%`,
+    left: `-${(draftCropRect.left / draftCropRect.width) * 100}%`,
+    top: `-${(draftCropRect.top / draftCropRect.height) * 100}%`,
+  }), [draftCropRect]);
+
+  const cropStudioAspectRatio = useMemo(() => {
+    if (cropStudioImageDimensions) {
+      return `${cropStudioImageDimensions.width} / ${cropStudioImageDimensions.height}`;
+    }
+
+    return '1 / 1';
+  }, [cropStudioImageDimensions]);
+
+  const handleCropPointerDown = (event: React.PointerEvent<HTMLElement>, handle: CropHandle) => {
+    const rect = cropStageRef.current?.getBoundingClientRect();
+    if (!rect) {
+      return;
+    }
+    cropDragState.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      handle,
+      originRect: draftCropRect,
+      width: rect.width || 1,
+      height: rect.height || 1,
+    };
+    setIsCropDragging(true);
+    cropStageRef.current?.setPointerCapture(event.pointerId);
+  };
+
+  const handleCropPointerMove = (event: React.PointerEvent<HTMLElement>) => {
+    const activeDrag = cropDragState.current;
+    if (!activeDrag || activeDrag.pointerId !== event.pointerId) {
       return;
     }
 
-    let isCancelled = false;
-    const requestSequence = ++previewRequestSequence.current;
-    const basePlacement = customization.basePlacement;
-    const placementOverride = basePlacement
-      ? {
-          x: Math.round(basePlacement.x + offsetX),
-          y: Math.round(basePlacement.y + offsetY),
-          width: Math.max(80, Math.round(basePlacement.width * (scalePercent / 100))),
-          height: Math.max(80, Math.round(basePlacement.height * (scalePercent / 100))),
-        }
-      : undefined;
+    const deltaX = ((event.clientX - activeDrag.startX) / activeDrag.width) * 100;
+    const deltaY = ((event.clientY - activeDrag.startY) / activeDrag.height) * 100;
+    const { originRect, handle } = activeDrag;
+    let nextLeft = originRect.left;
+    let nextTop = originRect.top;
+    let nextWidth = originRect.width;
+    let nextHeight = originRect.height;
 
-    const refreshPreview = async () => {
-      setPreviewLoading(true);
-      setPreviewError(null);
-
-      try {
-        const response = await createMockupRender({
-          templateId: customization.templateId,
-          artworkId: customization.sourceArtworkId,
-          sourceImageUrl: customization.imageUrl,
-          sourcePrompt: customization.userPrompt,
-          variantColor: selectedColour,
-          variantSize: selectedSize,
-          placementOverride,
-        });
-
-        if (isCancelled) {
-          return;
-        }
-        if (requestSequence !== previewRequestSequence.current) {
-          return;
-        }
-
-        setPreviewImageUrl(
-          response.render.outputImage || response.render.outputImageUrl || customization.mockupImageUrl
-        );
-        setPreviewRenderId(response.render.id);
-        setPreviewResolvedPlacement(placementOverride ?? customization.basePlacement);
-      } catch (renderError) {
-        if (isCancelled) {
-          return;
-        }
-        if (requestSequence !== previewRequestSequence.current) {
-          return;
-        }
-        console.error('Failed to refresh mockup preview:', renderError);
-        setPreviewError('Preview update failed. Showing the last available render.');
-      } finally {
-        if (!isCancelled && requestSequence === previewRequestSequence.current) {
-          setPreviewLoading(false);
-        }
+    if (handle === 'move') {
+      nextLeft = clamp(originRect.left + deltaX, 0, 100 - originRect.width);
+      nextTop = clamp(originRect.top + deltaY, 0, 100 - originRect.height);
+    } else {
+      if (handle.includes('e')) {
+        nextWidth = clamp(originRect.width + deltaX, MIN_CROP_SIZE, 100 - originRect.left);
       }
-    };
+      if (handle.includes('s')) {
+        nextHeight = clamp(originRect.height + deltaY, MIN_CROP_SIZE, 100 - originRect.top);
+      }
+      if (handle.includes('w')) {
+        nextLeft = clamp(originRect.left + deltaX, 0, originRect.left + originRect.width - MIN_CROP_SIZE);
+        nextWidth = originRect.width - (nextLeft - originRect.left);
+      }
+      if (handle.includes('n')) {
+        nextTop = clamp(originRect.top + deltaY, 0, originRect.top + originRect.height - MIN_CROP_SIZE);
+        nextHeight = originRect.height - (nextTop - originRect.top);
+      }
 
-    const debounceTimeout = window.setTimeout(() => {
-      void refreshPreview();
-    }, 120);
+      nextWidth = clamp(nextWidth, MIN_CROP_SIZE, 100 - nextLeft);
+      nextHeight = clamp(nextHeight, MIN_CROP_SIZE, 100 - nextTop);
+    }
 
-    return () => {
-      isCancelled = true;
-      window.clearTimeout(debounceTimeout);
-    };
-  }, [customization, offsetX, offsetY, scalePercent, selectedColour, selectedSize]);
+    setDraftCropRect({
+      left: nextLeft,
+      top: nextTop,
+      width: nextWidth,
+      height: nextHeight,
+    });
+  };
+
+  const handleCropPointerEnd = (event: React.PointerEvent<HTMLElement>) => {
+    const activeDrag = cropDragState.current;
+    if (activeDrag && activeDrag.pointerId === event.pointerId) {
+      cropDragState.current = null;
+      setIsCropDragging(false);
+      if (cropStageRef.current?.hasPointerCapture(event.pointerId)) {
+        cropStageRef.current.releasePointerCapture(event.pointerId);
+      }
+    }
+  };
 
   if (!customization) {
     return (
@@ -183,42 +323,65 @@ export function Customization() {
 
   // Render product preview configuration based on choices
   const totalPrice = (customization.basePrice * quantity).toFixed(2);
+  const previewTemplateUrl = customization.templateBaseImageUrl || customization.mockupImageUrl;
+  const supportsLiveTemplatePreview = Boolean(previewTemplateUrl && previewResolvedPlacement);
 
-  const handleConfirmAddToCart = () => {
+  const handleConfirmAddToCart = async () => {
     setIsAdding(true);
-    setTimeout(() => {
+    setPreviewLoading(true);
+    setPreviewError(null);
+
+    try {
+      let finalizedMockupUrl = customization.mockupImageUrl;
+      let finalizedRenderId = previewRenderId;
+
+      const response = await createMockupRender({
+        templateId: customization.templateId,
+        artworkId: customization.sourceArtworkId,
+        sourceImageUrl: customization.imageUrl,
+        sourcePrompt: customization.userPrompt,
+        variantColor: selectedColour,
+        variantSize: selectedSize,
+        placementOverride: previewResolvedPlacement ?? undefined,
+        cropOverride,
+      });
+
+      finalizedMockupUrl =
+        response.render.outputImage || response.render.outputImageUrl || customization.mockupImageUrl;
+      finalizedRenderId = response.render.id;
+      setPreviewRenderId(response.render.id);
+
       const cartItemId = `cart-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
       addToCart({
         id: cartItemId,
         generatedArtworkId: customization.artworkId,
         sourceArtworkId: customization.sourceArtworkId,
         productType: customization.productType,
-        mockupImageUrl: previewImageUrl || customization.mockupImageUrl,
+        mockupImageUrl: finalizedMockupUrl,
         selectedSize: selectedSize,
         selectedColour: selectedColour,
         quantity: quantity,
         price: customization.basePrice,
         templateId: customization.templateId,
-        backendRenderId: previewRenderId,
-        placementOverride: customization.basePlacement
-          ? {
-              x: Math.round(customization.basePlacement.x + offsetX),
-              y: Math.round(customization.basePlacement.y + offsetY),
-              width: Math.max(80, Math.round(customization.basePlacement.width * (scalePercent / 100))),
-              height: Math.max(80, Math.round(customization.basePlacement.height * (scalePercent / 100))),
-            }
-          : undefined,
+        backendRenderId: finalizedRenderId,
+        placementOverride: previewResolvedPlacement ?? undefined,
+        cropOverride,
         userPrompt: customization.userPrompt,
         originalImageUrl: customization.imageUrl
       });
 
-      setIsAdding(false);
       setIsSuccess(true);
       setTimeout(() => {
         setIsSuccess(false);
         navigate('/cart');
       }, 1500);
-    }, 1200);
+    } catch (renderError) {
+      console.error('Failed to finalize backend mockup render:', renderError);
+      setPreviewError('Could not finalize this mockup right now. Please try again.');
+    } finally {
+      setPreviewLoading(false);
+      setIsAdding(false);
+    }
   };
 
   return (
@@ -246,7 +409,7 @@ export function Customization() {
             {customization.productType === 'Digital Wallpaper' ? (
               <div className="relative w-full aspect-[16/10] bg-cyber-black border-4 border-gray-800 rounded-xl overflow-hidden shadow-2xl flex items-center justify-center">
                 <img 
-                  src={previewImageUrl || customization.imageUrl} 
+                  src={customization.imageUrl} 
                   alt="Desktop Wallpaper display" 
                   className="absolute w-full h-full object-cover"
                 />
@@ -265,7 +428,7 @@ export function Customization() {
                 }}
               >
                 <img 
-                  src={previewImageUrl || customization.imageUrl} 
+                  src={customization.imageUrl} 
                   alt="Generated artwork nested inside frame" 
                   className="w-full h-full object-cover"
                 />
@@ -274,15 +437,118 @@ export function Customization() {
                 )}
               </div>
             ) : (
-              // Structured overlays for mug, apparel, accessories
+              // Instant local preview for merch templates
               <div className="relative w-full h-full flex items-center justify-center">
-                <img 
-                  src={previewImageUrl || customization.mockupImageUrl} 
-                  alt={customization.productType} 
-                  className={cn(
-                    "w-full h-full object-contain selection-none pointer-events-none transition-all duration-500"
-                  )}
-                />
+                {supportsLiveTemplatePreview ? (
+                  <div
+                    className={cn(
+                      "relative w-full max-w-[34rem] selection-none transition-all duration-300",
+                      previewLoading && "opacity-60 scale-[0.99]"
+                    )}
+                    style={{
+                      aspectRatio: templateDimensions
+                        ? `${templateDimensions.width}/${templateDimensions.height}`
+                        : undefined,
+                    }}
+                  >
+                    <img
+                      src={previewTemplateUrl}
+                      alt={customization.templateName || customization.productType}
+                      className="absolute inset-0 w-full h-full object-contain pointer-events-none"
+                      onLoad={(event) => {
+                        const { naturalWidth, naturalHeight } = event.currentTarget;
+                        if (naturalWidth > 0 && naturalHeight > 0) {
+                          setTemplateDimensions((current) => {
+                            if (
+                              current?.width === naturalWidth &&
+                              current?.height === naturalHeight
+                            ) {
+                              return current;
+                            }
+
+                            return { width: naturalWidth, height: naturalHeight };
+                          });
+                        }
+                      }}
+                    />
+
+                    {previewPlacementStyle && (
+                      <div
+                        className="absolute overflow-hidden flex items-center justify-center"
+                        style={{
+                          ...previewPlacementStyle,
+                          opacity: 0.96,
+                          borderRadius: '12px',
+                        }}
+                      >
+                        {hasAppliedCrop && previewCropFrameStyle ? (
+                          <div
+                            className="relative overflow-hidden"
+                            style={previewCropFrameStyle}
+                          >
+                            <img
+                              src={customization.imageUrl}
+                              alt={customization.userPrompt}
+                              className="absolute pointer-events-none max-w-none"
+                              style={previewDesignImageStyle}
+                            />
+                          </div>
+                        ) : (
+                          <img
+                            src={customization.imageUrl}
+                            alt={customization.userPrompt}
+                            className="absolute inset-0 w-full h-full object-contain pointer-events-none"
+                          />
+                        )}
+                      </div>
+                    )}
+
+                    {customization.templateShadowLayerUrl && (
+                      <img
+                        src={customization.templateShadowLayerUrl}
+                        alt=""
+                        className="absolute inset-0 w-full h-full object-contain pointer-events-none"
+                        aria-hidden="true"
+                      />
+                    )}
+
+                    {customization.templateHighlightLayerUrl && (
+                      <img
+                        src={customization.templateHighlightLayerUrl}
+                        alt=""
+                        className="absolute inset-0 w-full h-full object-contain pointer-events-none"
+                        aria-hidden="true"
+                      />
+                    )}
+                  </div>
+                ) : (
+                  <img 
+                    src={customization.mockupImageUrl} 
+                    alt={customization.productType} 
+                    className={cn(
+                      "w-full h-full object-contain selection-none pointer-events-none transition-all duration-500",
+                      previewLoading && "opacity-30 scale-[0.985]"
+                    )}
+                  />
+                )}
+              </div>
+            )}
+
+            {previewLoading && (
+              <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-4 bg-cyber-black/58 backdrop-blur-[2px]">
+                <div className="relative h-16 w-16">
+                  <div className="absolute inset-0 rounded-full border-2 border-neon-blue/30" />
+                  <div className="absolute inset-0 rounded-full border-2 border-transparent border-t-neon-blue border-r-neon-purple animate-spin" />
+                  <div className="absolute inset-3 rounded-full border border-transparent border-b-neon-pink animate-spin [animation-direction:reverse] [animation-duration:1.3s]" />
+                </div>
+                <div className="text-center">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.35em] text-white">
+                    Finalizing Mockup
+                  </p>
+                  <p className="mt-2 text-[9px] uppercase tracking-widest text-gray-400">
+                    Saving your chosen placement to the backend
+                  </p>
+                </div>
               </div>
             )}
 
@@ -300,7 +566,7 @@ export function Customization() {
             <div className="absolute bottom-6 left-6 bg-cyber-black/80 border border-white/5 rounded-lg px-3 py-1.5 flex items-center gap-2">
               <Layers size={14} className="text-neon-blue animate-pulse" />
               <span className="text-[9px] font-mono tracking-widest text-[#9ca3af] uppercase">
-                {previewLoading ? 'Rendering backend preview' : 'Backend mockup render active'}
+                {previewLoading ? 'Finalizing backend render' : 'Live preview mode active'}
               </span>
             </div>
           </div>
@@ -310,24 +576,6 @@ export function Customization() {
               {previewError}
             </div>
           )}
-
-          <div className="rounded-2xl border border-white/10 bg-cyber-black/70 px-4 py-4 text-[10px] uppercase tracking-widest text-gray-400 space-y-2">
-            <div className="flex items-center justify-between gap-4">
-              <span className="text-neon-blue font-bold">Preview Debug</span>
-              <span>{previewLoading ? 'Refreshing render' : 'Render settled'}</span>
-            </div>
-            <div className="grid grid-cols-2 gap-2 text-[9px]">
-              <span>X: {previewResolvedPlacement?.x ?? 'n/a'}</span>
-              <span>Y: {previewResolvedPlacement?.y ?? 'n/a'}</span>
-              <span>Width: {previewResolvedPlacement?.width ?? 'n/a'}</span>
-              <span>Height: {previewResolvedPlacement?.height ?? 'n/a'}</span>
-              <span>Scale: {scalePercent}%</span>
-              <span>Render ID: {previewRenderId ?? 'n/a'}</span>
-            </div>
-            <div className="border-t border-white/5 pt-2 text-[9px] break-all normal-case tracking-normal text-gray-500">
-              Preview URL: {previewImageUrl || 'n/a'}
-            </div>
-          </div>
 
           <div className="glass-card p-6 border-white/5 text-center flex flex-col items-center justify-center">
              <span className="inline-block w-2.5 h-2.5 rounded-full bg-emerald-500 animate-ping mb-3" />
@@ -365,8 +613,8 @@ export function Customization() {
                         </div>
                         <input
                           type="range"
-                          min={-280}
-                          max={280}
+                          min={-520}
+                          max={520}
                           step={10}
                           value={offsetX}
                           onChange={(event) => setOffsetX(Number(event.target.value))}
@@ -380,8 +628,8 @@ export function Customization() {
                         </div>
                         <input
                           type="range"
-                          min={-320}
-                          max={320}
+                          min={-620}
+                          max={620}
                           step={10}
                           value={offsetY}
                           onChange={(event) => setOffsetY(Number(event.target.value))}
@@ -402,13 +650,53 @@ export function Customization() {
                     </div>
                     <input
                       type="range"
-                      min={35}
-                      max={220}
+                      min={20}
+                      max={320}
                       step={5}
                       value={scalePercent}
                       onChange={(event) => setScalePercent(Number(event.target.value))}
                       className="w-full accent-[var(--color-neon-pink)]"
                     />
+                  </div>
+
+                  <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                    <div className="flex items-center justify-between gap-4">
+                      <div>
+                        <label className="flex items-center gap-2 text-[8px] font-bold text-gray-400 uppercase tracking-[0.3em] mb-2">
+                          <Crop size={12} />
+                          Design Crop
+                        </label>
+                        <p className="text-[9px] uppercase tracking-widest text-gray-500">
+                          {hasAppliedCrop
+                            ? `Crop applied • ${Math.round(appliedCropOverride?.width ?? 100)} by ${Math.round(appliedCropOverride?.height ?? 100)}`
+                            : 'Full design is currently visible'}
+                        </p>
+                      </div>
+                      <div className="flex flex-wrap gap-2 justify-end">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setDraftCropRect(appliedCropOverride ?? { left: 0, top: 0, width: 100, height: 100 });
+                            setIsCropStudioOpen(true);
+                          }}
+                          className="px-4 py-2 text-[9px] font-extrabold uppercase tracking-widest rounded-lg border border-white/10 bg-white/5 text-gray-300 hover:text-white hover:border-white/20 transition-all"
+                        >
+                          {hasAppliedCrop ? 'Edit Crop' : 'Open Crop Studio'}
+                        </button>
+                        {hasAppliedCrop && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setAppliedCropOverride(null);
+                              setDraftCropRect({ left: 0, top: 0, width: 100, height: 100 });
+                            }}
+                            className="px-4 py-2 text-[9px] font-extrabold uppercase tracking-widest rounded-lg border border-neon-pink/30 bg-neon-pink/10 text-neon-pink hover:bg-neon-pink hover:text-white transition-all"
+                          >
+                            Clear Crop
+                          </button>
+                        )}
+                      </div>
+                    </div>
                   </div>
 
                   <button
@@ -417,6 +705,8 @@ export function Customization() {
                       setOffsetX(0);
                       setOffsetY(0);
                       setScalePercent(100);
+                      setAppliedCropOverride(null);
+                      setDraftCropRect({ left: 0, top: 0, width: 100, height: 100 });
                     }}
                     className="px-4 py-2 text-[9px] font-extrabold uppercase tracking-widest rounded-lg border border-white/10 bg-white/5 text-gray-300 hover:text-white hover:border-white/20 transition-all"
                   >
@@ -560,10 +850,238 @@ export function Customization() {
 
       </div>
 
+      <AnimatePresence>
+        {isCropStudioOpen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-cyber-black/85 px-6 py-10 backdrop-blur-sm"
+          >
+            <motion.div
+              initial={{ opacity: 0, y: 24, scale: 0.98 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 24, scale: 0.98 }}
+              className="w-full max-w-5xl rounded-[2rem] border border-white/10 bg-[#090b10] shadow-[0_30px_120px_rgba(0,0,0,0.6)]"
+            >
+              <div className="flex items-center justify-between gap-4 border-b border-white/10 px-8 py-6">
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-[0.35em] text-neon-blue">Crop Studio</p>
+                  <h3 className="mt-2 text-2xl font-display font-black uppercase tracking-widest text-white">
+                    Focus The Design
+                  </h3>
+                  <p className="mt-2 text-[10px] uppercase tracking-widest text-gray-500">
+                    Zoom and reposition the artwork. Nothing changes until you apply it.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsCropStudioOpen(false)}
+                  className="rounded-full border border-white/10 px-4 py-2 text-[9px] font-extrabold uppercase tracking-widest text-gray-300 hover:border-white/20 hover:text-white transition-all"
+                >
+                  Close
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 gap-8 px-8 py-8 lg:grid-cols-[minmax(0,1.2fr)_minmax(320px,0.8fr)]">
+                <div className="space-y-4">
+                  <div className="rounded-[1.75rem] border border-white/10 bg-cyber-black/60 p-6">
+                    <div
+                      ref={cropStageRef}
+                      className={cn(
+                        "relative mx-auto w-full max-w-2xl overflow-hidden rounded-[1.5rem] border border-dashed border-neon-blue/35 bg-cyber-gray/20 select-none",
+                        isCropDragging ? "cursor-grabbing" : "cursor-default"
+                      )}
+                      style={{ aspectRatio: cropStudioAspectRatio }}
+                      onPointerMove={handleCropPointerMove}
+                      onPointerUp={handleCropPointerEnd}
+                      onPointerCancel={handleCropPointerEnd}
+                    >
+                      <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(255,255,255,0.06),transparent_68%)]" />
+                      <div className="absolute inset-0 bg-[linear-gradient(to_right,rgba(255,255,255,0.04)_1px,transparent_1px),linear-gradient(to_bottom,rgba(255,255,255,0.04)_1px,transparent_1px)] bg-[size:18%_18%] opacity-40" />
+                      <img
+                        src={customization.imageUrl}
+                        alt={`${customization.userPrompt} crop preview`}
+                        className="absolute inset-0 h-full w-full object-contain pointer-events-none"
+                        onLoad={(event) => {
+                          const { naturalWidth, naturalHeight } = event.currentTarget;
+                          if (naturalWidth > 0 && naturalHeight > 0) {
+                            setCropStudioImageDimensions({ width: naturalWidth, height: naturalHeight });
+                          }
+                        }}
+                      />
+                      <div
+                        className={cn(
+                          "absolute rounded-[1.15rem] border-2 border-white/90 bg-white/[0.04] shadow-[0_0_0_9999px_rgba(0,0,0,0.58)] backdrop-blur-[1px]",
+                          isCropDragging ? "cursor-grabbing" : "cursor-move"
+                        )}
+                        style={{
+                          left: `${draftCropRect.left}%`,
+                          top: `${draftCropRect.top}%`,
+                          width: `${draftCropRect.width}%`,
+                          height: `${draftCropRect.height}%`,
+                        }}
+                        onPointerDown={(event) => {
+                          event.stopPropagation();
+                          handleCropPointerDown(event, 'move');
+                        }}
+                      >
+                        <img
+                          src={customization.imageUrl}
+                          alt=""
+                          aria-hidden="true"
+                          className="absolute pointer-events-none max-w-none"
+                          style={draftCropPreviewStyle}
+                        />
+                        <div className="pointer-events-none absolute inset-0 rounded-[1rem] border border-white/25 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.12)]" />
+                        <div className="pointer-events-none absolute left-1/3 top-0 bottom-0 border-l border-white/20" />
+                        <div className="pointer-events-none absolute left-2/3 top-0 bottom-0 border-l border-white/20" />
+                        <div className="pointer-events-none absolute top-1/3 left-0 right-0 border-t border-white/20" />
+                        <div className="pointer-events-none absolute top-2/3 left-0 right-0 border-t border-white/20" />
+
+                        {([
+                          ['nw', 'left-0 top-0 cursor-nwse-resize -translate-x-1/2 -translate-y-1/2'],
+                          ['n', 'left-1/2 top-0 cursor-ns-resize -translate-x-1/2 -translate-y-1/2'],
+                          ['ne', 'right-0 top-0 cursor-nesw-resize translate-x-1/2 -translate-y-1/2'],
+                          ['e', 'right-0 top-1/2 cursor-ew-resize translate-x-1/2 -translate-y-1/2'],
+                          ['se', 'right-0 bottom-0 cursor-nwse-resize translate-x-1/2 translate-y-1/2'],
+                          ['s', 'left-1/2 bottom-0 cursor-ns-resize -translate-x-1/2 translate-y-1/2'],
+                          ['sw', 'left-0 bottom-0 cursor-nesw-resize -translate-x-1/2 translate-y-1/2'],
+                          ['w', 'left-0 top-1/2 cursor-ew-resize -translate-x-1/2 -translate-y-1/2'],
+                        ] as const).map(([handle, className]) => (
+                          <button
+                            key={handle}
+                            type="button"
+                            className={cn(
+                              "absolute rounded-full border-2 border-white bg-cyber-black shadow-[0_0_0_4px_rgba(0,0,0,0.35)]",
+                              className
+                            )}
+                            style={{ width: `${CROP_HANDLE_SIZE}px`, height: `${CROP_HANDLE_SIZE}px` }}
+                            onPointerDown={(event) => {
+                              event.stopPropagation();
+                              handleCropPointerDown(event, handle);
+                            }}
+                          />
+                        ))}
+                      </div>
+                      <div className="pointer-events-none absolute inset-x-0 top-4 flex justify-center">
+                        <span className="rounded-full border border-white/10 bg-cyber-black/75 px-3 py-1 text-[9px] font-bold uppercase tracking-[0.3em] text-gray-300">
+                          Drag The Box Or Pull A Handle
+                        </span>
+                      </div>
+                      <div className="absolute inset-0 border border-white/10 pointer-events-none" />
+                    </div>
+                  </div>
+                  <p className="text-[10px] uppercase tracking-widest text-gray-500">
+                    Resize from any corner or side to change crop size and aspect ratio. Drag inside the box to reposition it over the artwork.
+                  </p>
+                </div>
+
+                <div className="space-y-6">
+                  <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                    <p className="text-[9px] font-bold uppercase tracking-[0.3em] text-gray-300 mb-3">
+                      Crop Box Presets
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {[
+                        { label: 'Full', rect: { left: 0, top: 0, width: 100, height: 100 } },
+                        { label: 'Square', rect: { left: 20, top: 20, width: 60, height: 60 } },
+                        { label: 'Portrait', rect: { left: 28, top: 8, width: 44, height: 78 } },
+                        { label: 'Wide', rect: { left: 10, top: 26, width: 80, height: 48 } },
+                      ].map(({ label, rect }) => (
+                        <button
+                          key={label}
+                          type="button"
+                          onClick={() => setDraftCropRect(rect)}
+                          className={cn(
+                            "px-3 py-2 text-[9px] font-extrabold uppercase tracking-widest rounded-lg border transition-all",
+                            draftCropRect.left === rect.left &&
+                            draftCropRect.top === rect.top &&
+                            draftCropRect.width === rect.width &&
+                            draftCropRect.height === rect.height
+                              ? "bg-white text-cyber-black border-white"
+                              : "bg-white/5 border-white/10 text-gray-400 hover:text-white hover:border-white/20"
+                          )}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                    <div className="flex items-center justify-between gap-4 mb-4">
+                      <p className="text-[9px] font-bold uppercase tracking-[0.3em] text-gray-300">
+                        Crop Metrics
+                      </p>
+                      <span className="text-[9px] uppercase tracking-widest text-gray-500">
+                        {Math.round(draftCropRect.width)}w / {Math.round(draftCropRect.height)}h
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 text-[9px] uppercase tracking-widest text-gray-500">
+                      <span>Left: {Math.round(draftCropRect.left)}%</span>
+                      <span>Top: {Math.round(draftCropRect.top)}%</span>
+                      <span>Width: {Math.round(draftCropRect.width)}%</span>
+                      <span>Height: {Math.round(draftCropRect.height)}%</span>
+                    </div>
+                  </div>
+
+                  <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-[10px] uppercase tracking-widest text-gray-500">
+                    Press <span className="text-white font-bold">Apply Crop</span> to use this crop.
+                    Use <span className="text-white font-bold">Reset</span> to go back to the full design before applying.
+                  </div>
+
+                  <div className="flex flex-wrap gap-3">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDraftCropRect({ left: 0, top: 0, width: 100, height: 100 });
+                      }}
+                      className="px-4 py-3 text-[9px] font-extrabold uppercase tracking-widest rounded-xl border border-white/10 bg-white/5 text-gray-300 hover:text-white hover:border-white/20 transition-all"
+                    >
+                      Reset
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAppliedCropOverride(null);
+                        setDraftCropRect({ left: 0, top: 0, width: 100, height: 100 });
+                        setIsCropStudioOpen(false);
+                      }}
+                      className="px-4 py-3 text-[9px] font-extrabold uppercase tracking-widest rounded-xl border border-neon-pink/30 bg-neon-pink/10 text-neon-pink hover:bg-neon-pink hover:text-white transition-all"
+                    >
+                      Remove Crop
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const nextCrop =
+                          draftCropRect.left === 0 &&
+                          draftCropRect.top === 0 &&
+                          draftCropRect.width === 100 &&
+                          draftCropRect.height === 100
+                            ? null
+                            : draftCropRect;
+
+                        setAppliedCropOverride(nextCrop);
+                        setIsCropStudioOpen(false);
+                      }}
+                      className="ml-auto px-5 py-3 text-[9px] font-black uppercase tracking-widest rounded-xl bg-white text-cyber-black hover:bg-neon-blue hover:text-white transition-all"
+                    >
+                      Apply Crop
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       <ImageModal 
         isOpen={isPreviewOpen}
         onClose={() => setIsPreviewOpen(false)}
-        imageUrl={previewImageUrl || customization.imageUrl}
+        imageUrl={customization.imageUrl}
         title={`Vision: ${customization.userPrompt}`}
       />
     </div>

@@ -752,20 +752,26 @@ export function Generator() {
                         <button
                           className="text-center py-2 text-[9px] font-extrabold uppercase tracking-widest border border-white/10 hover:border-white text-gray-300 hover:text-white rounded-lg transition-all cursor-pointer"
                           onClick={() => {
+                            const matchedTemplate = mockupTemplates.find((template) => template.id === product.templateId);
                             const customization: ActiveCustomization = {
                               artworkId: selectedDesign.id,
                               sourceArtworkId: selectedDesign.sourceArtworkId,
                               userPrompt: selectedDesign.title,
                               imageUrl: selectedDesign.imageUrl,
                               templateId: product.templateId,
+                              templateName: matchedTemplate?.name,
                               productType: product.productType,
                               mockupImageUrl: product.mockupImageUrl,
+                              templateBaseImageUrl: matchedTemplate?.baseImage,
+                              templateMaskImageUrl: matchedTemplate?.maskImage,
+                              templateShadowLayerUrl: matchedTemplate?.shadowLayer,
+                              templateHighlightLayerUrl: matchedTemplate?.highlightLayer,
                               basePrice: product.basePrice,
                               sizes: [...product.sizes],
                               colours: [...product.colours],
                               basePlacement:
                                 getPlacementFromCandidate(mockupRenders[product.templateId]?.placementOverride) ||
-                                getPlacementFromTemplate(mockupTemplates.find((template) => template.id === product.templateId)!) ||
+                                (matchedTemplate ? getPlacementFromTemplate(matchedTemplate) : null) ||
                                 null,
                             };
                             setActiveCustomization(customization);

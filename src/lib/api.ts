@@ -1,4 +1,4 @@
-import type { Artwork, MockupRender, MockupTemplate, PlacementOverride, Product, VideoClip } from "../types.ts";
+import type { Artwork, CropOverride, MockupRender, MockupTemplate, PlacementOverride, Product, VideoClip } from "../types.ts";
 
 interface BackendCategory {
   id: number;
@@ -69,6 +69,12 @@ interface BackendMockupRender {
   variant_color: string;
   variant_size: string;
   placement_override?: PlacementOverride | null;
+  crop_override?: {
+    left?: number;
+    top?: number;
+    width?: number;
+    height?: number;
+  } | null;
   status: 'pending' | 'processing' | 'ready' | 'failed';
   cache_key: string;
   output_image: string | null;
@@ -203,6 +209,15 @@ function mapMockupTemplate(template: BackendMockupTemplate): MockupTemplate {
 }
 
 function mapMockupRender(render: BackendMockupRender): MockupRender {
+  const cropOverride: CropOverride | null = render.crop_override
+    ? {
+        left: Number(render.crop_override.left ?? 0),
+        top: Number(render.crop_override.top ?? 0),
+        width: Number(render.crop_override.width ?? 100),
+        height: Number(render.crop_override.height ?? 100),
+      }
+    : null;
+
   return {
     id: render.id,
     template: mapMockupTemplate(render.template),
@@ -213,6 +228,7 @@ function mapMockupRender(render: BackendMockupRender): MockupRender {
     variantColor: render.variant_color,
     variantSize: render.variant_size,
     placementOverride: render.placement_override || null,
+    cropOverride,
     status: render.status,
     cacheKey: render.cache_key,
     outputImage: resolveAssetUrl(render.output_image),
@@ -271,6 +287,7 @@ export async function createMockupRender(input: {
   variantColor?: string;
   variantSize?: string;
   placementOverride?: PlacementOverride;
+  cropOverride?: CropOverride;
 }) {
   const response = await sendJson<MockupRenderMutationResponse>("/generator/mockup-renders/", {
     method: "POST",
@@ -286,6 +303,14 @@ export async function createMockupRender(input: {
       variant_color: input.variantColor,
       variant_size: input.variantSize,
       placement_override: input.placementOverride,
+      crop_override: input.cropOverride
+        ? {
+            left: input.cropOverride.left,
+            top: input.cropOverride.top,
+            width: input.cropOverride.width,
+            height: input.cropOverride.height,
+          }
+        : undefined,
     }),
   });
 

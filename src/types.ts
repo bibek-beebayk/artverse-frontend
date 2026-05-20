@@ -63,14 +63,26 @@ export interface PlacementOverride {
   height: number;
 }
 
+export interface CropOverride {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
 export interface ActiveCustomization {
   artworkId: string;
   sourceArtworkId?: number;
   userPrompt: string;
   imageUrl: string;
   templateId: number;
+  templateName?: string;
   productType: string;
   mockupImageUrl: string;
+  templateBaseImageUrl?: string | null;
+  templateMaskImageUrl?: string | null;
+  templateShadowLayerUrl?: string | null;
+  templateHighlightLayerUrl?: string | null;
   basePrice: number;
   sizes: string[];
   colours: string[];
@@ -118,6 +130,7 @@ export interface MockupRender {
   status: 'pending' | 'processing' | 'ready' | 'failed';
   cacheKey: string;
   placementOverride?: PlacementOverride | null;
+  cropOverride?: CropOverride | null;
   outputImage: string | null;
   outputImageUrl: string;
   processingNotes: Record<string, unknown>;
@@ -141,6 +154,7 @@ export interface CartItem {
   templateId?: number;
   backendRenderId?: number;
   placementOverride?: PlacementOverride;
+  cropOverride?: CropOverride;
   printProviderProductId?: string;
   printProviderVariantId?: string;
   userPrompt?: string;
