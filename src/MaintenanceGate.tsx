@@ -26,13 +26,15 @@ export function MaintenanceGate({ children }: PropsWithChildren) {
             localStorage.removeItem(STORAGE_KEY);
           }
           setAccessGranted(true);
+          setError(null);
         } else {
           setAccessGranted(false);
         }
       } catch (statusError) {
         console.error('Failed to verify maintenance access:', statusError);
-        setAccessGranted(false);
-        setError('Unable to verify site availability right now.');
+        localStorage.removeItem(STORAGE_KEY);
+        setAccessGranted(true);
+        setError(null);
       } finally {
         setLoading(false);
       }

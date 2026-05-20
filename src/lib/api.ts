@@ -298,6 +298,7 @@ export async function createMockupRender(input: {
 
 export async function getMaintenanceStatus(token?: string) {
   return sendJson<MaintenanceStatusResponse>("/auth/maintenance-status/", {
+    cache: "no-store",
     headers: token ? { "X-Maintenance-Token": token } : undefined,
   });
 }
