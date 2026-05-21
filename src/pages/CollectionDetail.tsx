@@ -3,7 +3,7 @@ import { useParams, Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { CATEGORIES, ARTWORKS } from '../constants.ts';
 import { useAuth } from '../context/AuthContext.tsx';
-import { ImageModal, ShareModal } from '../components/Common.tsx';
+import { ImageModal, ShareModal, SmartImage } from '../components/Common.tsx';
 import { cn } from '../lib/utils.ts';
 import { 
   Download, 
@@ -89,10 +89,11 @@ export function CollectionDetail() {
       {/* Category Hero Banner */}
       <section className="relative px-6 py-24 md:py-32 flex flex-col justify-center border-b border-white/5 overflow-hidden">
         <div className="absolute inset-0">
-          <img 
-            src={categoryMeta.imageUrl} 
-            alt={categoryMeta.name} 
-            className="w-full h-full object-cover opacity-20 filter blur-sm scale-105"
+          <SmartImage
+            src={categoryMeta.imageUrl}
+            alt={categoryMeta.name}
+            className="w-full h-full"
+            imgClassName="w-full h-full object-cover opacity-20 filter blur-sm scale-105"
             loading="lazy"
           />
           <div className="absolute inset-0 bg-gradient-to-t from-cyber-black via-cyber-black/70 to-transparent" />
@@ -243,10 +244,11 @@ export function CollectionDetail() {
                     >
                       {/* Image Viewer Frame */}
                       <div className="relative aspect-square overflow-hidden bg-cyber-black">
-                        <img 
-                          src={art.imageUrl} 
-                          alt={art.title} 
-                          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700"
+                        <SmartImage
+                          src={art.thumbnailUrl || art.imageUrl}
+                          alt={art.title}
+                          className="w-full h-full"
+                          imgClassName="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700"
                           loading="lazy"
                         />
                         <div className="absolute inset-0 bg-cyber-black/0 group-hover:bg-cyber-black/60 transition-all flex flex-col items-center justify-center opacity-0 group-hover:opacity-100 p-8 gap-4">

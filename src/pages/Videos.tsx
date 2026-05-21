@@ -2,7 +2,7 @@ import React, { useRef, useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Play, Pause, Volume2, VolumeX, Maximize, Minimize } from 'lucide-react';
 import { VideoClip } from '../types.ts';
-import { Pagination } from '../components/Common.tsx';
+import { Pagination, SmartImage } from '../components/Common.tsx';
 import { cn } from '../lib/utils.ts';
 import { getVideos } from '../lib/api.ts';
 
@@ -106,11 +106,12 @@ const VideoCard: React.FC<VideoCardProps> = ({ video }) => {
       onMouseLeave={() => setShowControls(false)}
       onClick={togglePlay}
     >
-      <img 
-        src={video.thumbnailUrl} 
-        alt={video.title} 
-        className={cn(
-          "absolute inset-0 w-full h-full object-cover transition-opacity duration-700",
+      <SmartImage
+        src={video.thumbnailUrl}
+        alt={video.title}
+        className="absolute inset-0"
+        imgClassName={cn(
+          "w-full h-full object-cover transition-opacity duration-700",
           isPlaying ? "opacity-0" : "opacity-100"
         )}
         referrerPolicy="no-referrer"

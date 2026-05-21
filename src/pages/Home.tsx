@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { ChevronRight, Play, Image as ImageIcon, Sparkles, Zap, Globe, Cpu, ShoppingBag, WandSparkles } from 'lucide-react';
 import { motion } from 'motion/react';
 import type { Artwork } from '../types.ts';
+import { SmartImage } from '../components/Common.tsx';
 import { getFeaturedArtworks } from '../lib/api.ts';
 
 export function Home() {
@@ -115,14 +116,21 @@ export function Home() {
       <section className="relative h-[90vh] flex items-center justify-center overflow-hidden px-6">
         <div className="absolute inset-0 z-0">
           <div className="absolute inset-0 bg-gradient-to-b from-cyber-black via-transparent to-cyber-black z-10" />
-          <motion.img 
+          <motion.div
             initial={{ scale: 1.1 }}
             animate={{ scale: 1 }}
             transition={{ duration: 10, repeat: Infinity, repeatType: "reverse" }}
-            src="https://images.unsplash.com/photo-1620641788421-7a1c342ea42e?auto=format&fit=crop&q=80&w=2400" 
-            className="w-full h-full object-cover opacity-60"
-            referrerPolicy="no-referrer"
-          />
+            className="w-full h-full"
+          >
+            <SmartImage
+              src="https://images.unsplash.com/photo-1620641788421-7a1c342ea42e?auto=format&fit=crop&q=80&w=2400"
+              alt="Artverse hero"
+              className="w-full h-full"
+              imgClassName="w-full h-full object-cover opacity-60"
+              loaderClassName="bg-cyber-black"
+              referrerPolicy="no-referrer"
+            />
+          </motion.div>
           <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,transparent_0%,rgba(0,0,0,0.8)_100%)] z-[5]" />
         </div>
 
@@ -213,10 +221,11 @@ export function Home() {
                   className="group cursor-pointer"
                 >
                   <div className="relative aspect-[4/5] overflow-hidden rounded-2xl glass-card border-white/5 group-hover:border-neon-purple transition-all duration-500">
-                    <img 
-                      src={art.imageUrl} 
-                      alt={art.title} 
-                      className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700"
+                    <SmartImage
+                      src={art.thumbnailUrl || art.imageUrl}
+                      alt={art.title}
+                      className="w-full h-full"
+                      imgClassName="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700"
                       referrerPolicy="no-referrer"
                       loading="lazy"
                     />

@@ -1,4 +1,4 @@
-import { ReactNode, useState } from 'react';
+import { ImgHTMLAttributes, ReactNode, useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { X, ChevronLeft, ChevronRight, Share2, Copy, Link as LinkIcon, Twitter, Facebook, ExternalLink, Check } from 'lucide-react';
 import { Navbar, Footer } from './Navigation.tsx';
@@ -14,6 +14,77 @@ export function Layout({ children }: LayoutProps) {
       <Navbar />
       <main className="flex-grow pt-24">{children}</main>
       <Footer />
+    </div>
+  );
+}
+
+interface SmartImageProps extends Omit<ImgHTMLAttributes<HTMLImageElement>, 'className'> {
+  className?: string;
+  imgClassName?: string;
+  loaderClassName?: string;
+}
+
+export function SmartImage({
+  src,
+  alt,
+  className,
+  imgClassName,
+  loaderClassName,
+  onLoad,
+  onError,
+  ...props
+}: SmartImageProps) {
+  const [isLoaded, setIsLoaded] = useState(false);
+  const [hasError, setHasError] = useState(false);
+
+  useEffect(() => {
+    setIsLoaded(false);
+    setHasError(false);
+  }, [src]);
+
+  return (
+    <div className={cn('relative overflow-hidden bg-cyber-black/40', className)}>
+      {!isLoaded && !hasError && (
+        <div
+          className={cn(
+            'absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-cyber-black/90 text-gray-500',
+            loaderClassName
+          )}
+        >
+          <div className="relative h-10 w-10">
+            <div className="absolute inset-0 rounded-full border-2 border-neon-blue/40 border-t-neon-blue animate-spin" />
+            <div className="absolute inset-[8px] rounded-full border-2 border-neon-purple/30 border-b-neon-purple animate-spin [animation-direction:reverse] [animation-duration:1.4s]" />
+          </div>
+          <span className="text-[9px] font-bold uppercase tracking-[0.3em]">Loading</span>
+        </div>
+      )}
+
+      {hasError ? (
+        <div className="absolute inset-0 z-10 flex items-center justify-center bg-cyber-black/90 px-4 text-center text-[9px] font-bold uppercase tracking-[0.3em] text-gray-500">
+          Image unavailable
+        </div>
+      ) : null}
+
+      <img
+        src={src}
+        alt={alt}
+        className={cn(
+          'transition-opacity duration-300',
+          isLoaded && !hasError ? 'opacity-100' : 'opacity-0',
+          imgClassName
+        )}
+        onLoad={(event) => {
+          setIsLoaded(true);
+          setHasError(false);
+          onLoad?.(event);
+        }}
+        onError={(event) => {
+          setHasError(true);
+          setIsLoaded(false);
+          onError?.(event);
+        }}
+        {...props}
+      />
     </div>
   );
 }
@@ -55,10 +126,12 @@ export function ImageModal({ isOpen, onClose, imageUrl, title }: ModalProps) {
             </button>
             
             <div className="relative w-full h-full glass-card overflow-hidden flex items-center justify-center border-white/20">
-               <img 
-                src={imageUrl} 
-                alt={title} 
-                className="max-w-full max-h-full object-contain"
+              <SmartImage
+                src={imageUrl}
+                alt={title}
+                className="w-full h-full bg-transparent"
+                imgClassName="max-w-full max-h-full object-contain mx-auto"
+                loaderClassName="bg-cyber-black"
                 referrerPolicy="no-referrer"
                 loading="lazy"
               />

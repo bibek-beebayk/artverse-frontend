@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Maximize2, Share2, Heart } from 'lucide-react';
 import type { Artwork, Category } from '../types.ts';
-import { ImageModal, Pagination, ShareModal } from '../components/Common.tsx';
+import { ImageModal, Pagination, ShareModal, SmartImage } from '../components/Common.tsx';
 import { cn } from '../lib/utils.ts';
 import { useAuth } from '../context/AuthContext.tsx';
 import { getArtworks, getGalleryCategories } from '../lib/api.ts';
@@ -109,10 +109,11 @@ export function Gallery() {
                   onClick={() => setSelectedArt(art)}
                 >
                   <div className="glass-card overflow-hidden h-96 group-hover:border-neon-blue transition-all duration-500">
-                    <img 
-                      src={art.imageUrl} 
-                      alt={art.title} 
-                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700"
+                    <SmartImage
+                      src={art.thumbnailUrl || art.imageUrl}
+                      alt={art.title}
+                      className="w-full h-full"
+                      imgClassName="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700"
                       referrerPolicy="no-referrer"
                       loading="lazy"
                     />

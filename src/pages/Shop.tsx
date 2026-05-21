@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { ShoppingBag, AlertCircle } from 'lucide-react';
 import type { Product } from '../types.ts';
+import { SmartImage } from '../components/Common.tsx';
 import { getProductCategories, getProducts } from '../lib/api.ts';
 import { cn } from '../lib/utils.ts';
 
@@ -83,10 +84,11 @@ export function Shop() {
             {filteredProducts.map((product) => (
               <div key={product.id} className="group cursor-default">
                 <div className="relative aspect-square glass-card overflow-hidden mb-6 border-white/5 group-hover:border-neon-pink/50 transition-all">
-                  <img 
-                    src={product.imageUrl} 
-                    alt={product.name} 
-                    className="w-full h-full object-cover grayscale brightness-50 group-hover:grayscale-0 group-hover:brightness-100 transition-all duration-700"
+                  <SmartImage
+                    src={product.thumbnailUrl || product.imageUrl}
+                    alt={product.name}
+                    className="w-full h-full"
+                    imgClassName="w-full h-full object-cover grayscale brightness-50 group-hover:grayscale-0 group-hover:brightness-100 transition-all duration-700"
                     referrerPolicy="no-referrer"
                     loading="lazy"
                   />

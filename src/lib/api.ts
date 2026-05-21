@@ -13,6 +13,7 @@ interface BackendArtwork {
   category: BackendCategory;
   description: string;
   image: string | null;
+  thumbnail: string | null;
   image_url: string;
   is_featured: boolean;
   created_at: string;
@@ -35,6 +36,7 @@ interface BackendProduct {
   description: string;
   price: string;
   image: string | null;
+  thumbnail: string | null;
   image_url: string;
   inventory: number;
   is_active: boolean;
@@ -148,6 +150,7 @@ async function sendJson<T>(path: string, init?: RequestInit): Promise<T> {
 
 function mapArtwork(artwork: BackendArtwork): Artwork {
   const imageUrl = resolveAssetUrl(artwork.image) || artwork.image_url;
+  const thumbnailUrl = resolveAssetUrl(artwork.thumbnail) || imageUrl;
   return {
     id: String(artwork.id),
     backendArtworkId: artwork.id,
@@ -157,6 +160,7 @@ function mapArtwork(artwork: BackendArtwork): Artwork {
     tags: [],
     suitableProducts: ['Wallpaper', 'Canvas', 'Poster', 'Digital Download'],
     imageUrl,
+    thumbnailUrl,
     wallpaperDownloadUrl: imageUrl,
     printProductUrl: '/shop',
     price: artwork.is_featured ? '$49.99' : '$29.99',
@@ -177,12 +181,15 @@ function mapVideoClip(video: BackendVideoClip): VideoClip {
 
 function mapProduct(product: BackendProduct): Product {
   const price = Number(product.price);
+  const imageUrl = resolveAssetUrl(product.image) || product.image_url;
+  const thumbnailUrl = resolveAssetUrl(product.thumbnail) || imageUrl;
   return {
     id: String(product.id),
     name: product.name,
     category: product.category.name,
     price: Number.isNaN(price) ? product.price : `$${price.toFixed(2)}`,
-    imageUrl: resolveAssetUrl(product.image) || product.image_url,
+    imageUrl,
+    thumbnailUrl,
     description: product.description,
   };
 }

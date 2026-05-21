@@ -21,6 +21,7 @@ export interface Artwork {
   tags: string[];
   suitableProducts: string[];
   imageUrl: string;
+  thumbnailUrl?: string;
   wallpaperDownloadUrl: string;
   printProductUrl: string;
   price: string;
@@ -42,6 +43,7 @@ export interface Product {
   category: string;
   price: string;
   imageUrl: string;
+  thumbnailUrl?: string;
   description?: string;
 }
 

@@ -7,7 +7,7 @@ import { useCart } from '../context/CartContext.tsx';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase.ts';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 import { cn } from '../lib/utils.ts';
-import { ImageModal } from '../components/Common.tsx';
+import { ImageModal, SmartImage } from '../components/Common.tsx';
 import { createMockupRender, getArtworks, getMockupTemplates } from '../lib/api.ts';
 
 const TEMPLATE_META: Record<
@@ -505,10 +505,11 @@ export function Generator() {
                         )}
                       >
                         <div className="aspect-[4/3] overflow-hidden">
-                          <img
-                            src={art.imageUrl}
+                          <SmartImage
+                            src={art.thumbnailUrl || art.imageUrl}
                             alt={art.title}
-                            className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
+                            className="w-full h-full"
+                            imgClassName="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
                             loading="lazy"
                           />
                         </div>
@@ -572,10 +573,11 @@ export function Generator() {
                   animate={{ opacity: 1, scale: 1 }}
                   className="w-full h-full relative group"
                 >
-                  <img
+                  <SmartImage
                     src={generatedImage}
                     alt="Generated Art"
-                    className="w-full h-full object-cover cursor-pointer"
+                    className="w-full h-full"
+                    imgClassName="w-full h-full object-cover cursor-pointer"
                     onClick={() => setIsModalOpen(true)}
                     loading="lazy"
                   />
@@ -613,10 +615,11 @@ export function Generator() {
                   animate={{ opacity: 1, scale: 1 }}
                   className="w-full h-full relative group"
                 >
-                  <img
+                  <SmartImage
                     src={selectedDesign.imageUrl}
                     alt={selectedDesign.title}
-                    className="w-full h-full object-cover cursor-pointer"
+                    className="w-full h-full"
+                    imgClassName="w-full h-full object-cover cursor-pointer"
                     onClick={() => setIsModalOpen(true)}
                     loading="lazy"
                   />
@@ -713,10 +716,11 @@ export function Generator() {
                   >
                     <div className="relative aspect-square bg-[#0c0d12] flex items-center justify-center p-6 overflow-hidden">
                       {product.mockupImageUrl ? (
-                        <img
+                        <SmartImage
                           src={product.mockupImageUrl}
                           alt={product.productType}
-                          className={cn(
+                          className="w-full h-full"
+                          imgClassName={cn(
                             'w-full h-full object-cover transition-transform duration-500',
                             isProcessing ? 'opacity-35 animate-pulse' : 'group-hover:scale-105'
                           )}
