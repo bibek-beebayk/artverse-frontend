@@ -97,6 +97,19 @@ interface ModalProps {
 }
 
 export function ImageModal({ isOpen, onClose, imageUrl, title }: ModalProps) {
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+
+    const originalOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+
+    return () => {
+      document.body.style.overflow = originalOverflow;
+    };
+  }, [isOpen]);
+
   return (
     <AnimatePresence>
       {isOpen && (
@@ -104,7 +117,7 @@ export function ImageModal({ isOpen, onClose, imageUrl, title }: ModalProps) {
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          className="fixed inset-0 z-[100] flex items-center justify-center p-4 md:p-12"
+          className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 md:p-12"
         >
           <motion.div 
              className="absolute inset-0 bg-cyber-black/95 backdrop-blur-2xl"
@@ -119,10 +132,18 @@ export function ImageModal({ isOpen, onClose, imageUrl, title }: ModalProps) {
           >
             <button 
               onClick={onClose}
-              className="absolute -top-12 right-0 text-white/50 hover:text-white transition-colors flex items-center gap-2 group p-2"
+              className="absolute right-0 top-0 z-[102] hidden sm:flex text-white/50 hover:text-white transition-colors items-center gap-2 group p-2"
             >
               <span className="text-xs uppercase tracking-[0.2em]">Close</span>
               <X size={24} className="group-hover:rotate-90 transition-transform" />
+            </button>
+
+            <button
+              onClick={onClose}
+              className="absolute top-3 right-3 z-[102] sm:hidden flex items-center justify-center h-11 w-11 rounded-full bg-cyber-black/85 border border-white/15 text-white shadow-lg backdrop-blur-md"
+              aria-label="Close fullscreen image"
+            >
+              <X size={20} />
             </button>
             
             <div className="relative w-full h-full glass-card overflow-hidden flex items-center justify-center border-white/20">
@@ -136,8 +157,8 @@ export function ImageModal({ isOpen, onClose, imageUrl, title }: ModalProps) {
                 loading="lazy"
               />
               
-              <div className="absolute bottom-0 left-0 right-0 p-8 pt-20 bg-gradient-to-t from-cyber-black to-transparent">
-                  <h3 className="text-2xl font-display font-bold text-white tracking-widest uppercase mb-2">
+              <div className="absolute bottom-0 left-0 right-0 p-4 sm:p-8 pt-16 sm:pt-20 bg-gradient-to-t from-cyber-black to-transparent">
+                  <h3 className="text-lg sm:text-2xl font-display font-bold text-white tracking-widest uppercase mb-2 pr-14 sm:pr-0">
                     {title}
                   </h3>
                   <div className="h-1 w-20 bg-neon-purple neon-glow-purple" />
@@ -248,40 +269,87 @@ interface PaginationProps {
 export function Pagination({ currentPage, totalPages, onPageChange }: PaginationProps) {
   if (totalPages <= 1) return null;
 
+  const visiblePages = Array.from({ length: totalPages }, (_, index) => index + 1).filter((page) => {
+    if (totalPages <= 7) {
+      return true;
+    }
+
+    if (page === 1 || page === totalPages) {
+      return true;
+    }
+
+    return Math.abs(page - currentPage) <= 1;
+  });
+
   return (
-    <div className="flex items-center justify-center gap-4 mt-16">
-      <button
-        disabled={currentPage === 1}
-        onClick={() => onPageChange(currentPage - 1)}
-        className="w-12 h-12 rounded-xl glass-card flex items-center justify-center text-white disabled:opacity-20 disabled:cursor-not-allowed hover:border-white/30 transition-all"
-      >
-        <ChevronLeft size={20} />
-      </button>
-      
-      <div className="flex items-center gap-2">
-        {Array.from({ length: totalPages }).map((_, i) => (
-          <button
-            key={i}
-            onClick={() => onPageChange(i + 1)}
-            className={cn(
-              "w-12 h-12 rounded-xl font-mono text-sm border transition-all",
-              currentPage === i + 1 
-                ? "bg-white text-cyber-black border-white font-bold" 
-                : "bg-white/5 text-gray-400 border-white/10 hover:border-white/30"
-            )}
-          >
-            {(i + 1).toString().padStart(2, '0')}
-          </button>
-        ))}
+    <div className="mt-16">
+      <div className="flex items-center justify-between gap-3 sm:hidden">
+        <button
+          disabled={currentPage === 1}
+          onClick={() => onPageChange(currentPage - 1)}
+          className="h-11 min-w-11 rounded-xl glass-card px-4 flex items-center justify-center gap-2 text-white disabled:opacity-20 disabled:cursor-not-allowed hover:border-white/30 transition-all"
+        >
+          <ChevronLeft size={18} />
+          <span className="text-[10px] font-bold uppercase tracking-widest">Prev</span>
+        </button>
+
+        <div className="min-w-0 flex-1 rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-center font-mono text-xs text-white">
+          {currentPage.toString().padStart(2, '0')} / {totalPages.toString().padStart(2, '0')}
+        </div>
+
+        <button
+          disabled={currentPage === totalPages}
+          onClick={() => onPageChange(currentPage + 1)}
+          className="h-11 min-w-11 rounded-xl glass-card px-4 flex items-center justify-center gap-2 text-white disabled:opacity-20 disabled:cursor-not-allowed hover:border-white/30 transition-all"
+        >
+          <span className="text-[10px] font-bold uppercase tracking-widest">Next</span>
+          <ChevronRight size={18} />
+        </button>
       </div>
 
-      <button
-        disabled={currentPage === totalPages}
-        onClick={() => onPageChange(currentPage + 1)}
-        className="w-12 h-12 rounded-xl glass-card flex items-center justify-center text-white disabled:opacity-20 disabled:cursor-not-allowed hover:border-white/30 transition-all"
-      >
-        <ChevronRight size={20} />
-      </button>
+      <div className="hidden sm:flex items-center justify-center gap-4">
+        <button
+          disabled={currentPage === 1}
+          onClick={() => onPageChange(currentPage - 1)}
+          className="w-12 h-12 rounded-xl glass-card flex items-center justify-center text-white disabled:opacity-20 disabled:cursor-not-allowed hover:border-white/30 transition-all"
+        >
+          <ChevronLeft size={20} />
+        </button>
+        
+        <div className="flex items-center gap-2 flex-wrap justify-center">
+          {visiblePages.map((page, index) => {
+            const previousPage = visiblePages[index - 1];
+            const needsGap = previousPage !== undefined && page - previousPage > 1;
+
+            return (
+              <div key={page} className="flex items-center gap-2">
+                {needsGap ? (
+                  <span className="px-2 text-xs font-mono text-gray-500">...</span>
+                ) : null}
+                <button
+                  onClick={() => onPageChange(page)}
+                  className={cn(
+                    "w-12 h-12 rounded-xl font-mono text-sm border transition-all",
+                    currentPage === page
+                      ? "bg-white text-cyber-black border-white font-bold"
+                      : "bg-white/5 text-gray-400 border-white/10 hover:border-white/30"
+                  )}
+                >
+                  {page.toString().padStart(2, '0')}
+                </button>
+              </div>
+            );
+          })}
+        </div>
+
+        <button
+          disabled={currentPage === totalPages}
+          onClick={() => onPageChange(currentPage + 1)}
+          className="w-12 h-12 rounded-xl glass-card flex items-center justify-center text-white disabled:opacity-20 disabled:cursor-not-allowed hover:border-white/30 transition-all"
+        >
+          <ChevronRight size={20} />
+        </button>
+      </div>
     </div>
   );
 }

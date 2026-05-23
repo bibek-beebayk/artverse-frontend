@@ -387,10 +387,10 @@ export function Customization() {
   return (
     <div className="bg-cyber-black text-white min-h-screen">
       {/* Upper Navigation bar */}
-      <div className="max-w-7xl mx-auto px-6 pt-12">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 pt-8 sm:pt-12">
         <Link 
           to="/generator" 
-          className="inline-flex items-center gap-2 text-xs uppercase tracking-widest text-gray-500 hover:text-white transition-colors"
+          className="inline-flex items-center gap-2 text-[10px] sm:text-xs uppercase tracking-widest text-gray-500 hover:text-white transition-colors"
         >
           <ChevronLeft size={16} />
           Back to Dream Workspace
@@ -398,11 +398,19 @@ export function Customization() {
       </div>
 
       {/* Main product configuration container */}
-      <div className="max-w-7xl mx-auto px-6 py-12 grid grid-cols-1 lg:grid-cols-2 gap-16 items-start">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-8 sm:py-12 grid grid-cols-1 lg:grid-cols-2 gap-8 lg:gap-16 items-start">
         
         {/* Dynamic Display Mockup Box */}
-        <section className="space-y-6">
-          <div className="relative aspect-square rounded-3xl bg-cyber-gray/30 border border-white/5 flex items-center justify-center overflow-hidden p-12 group shadow-[0_0_50px_rgba(0,0,0,0.8)]">
+        <section className="space-y-4 lg:space-y-6">
+          <div className="sticky top-24 z-20 space-y-3 lg:static lg:space-y-6">
+          <div className="rounded-2xl border border-neon-blue/15 bg-neon-blue/5 px-4 py-3 sm:hidden">
+            <p className="text-[9px] font-bold uppercase tracking-[0.3em] text-neon-blue">Live Preview</p>
+            <p className="mt-1 text-[10px] uppercase tracking-widest text-gray-400">
+              Keep adjusting the controls below. Your design updates here instantly.
+            </p>
+          </div>
+
+          <div className="relative aspect-[4/3] sm:aspect-square rounded-3xl bg-cyber-gray/30 border border-white/5 flex items-center justify-center overflow-hidden p-4 sm:p-8 lg:p-12 group shadow-[0_0_50px_rgba(0,0,0,0.8)]">
             <div className="absolute inset-0 bg-gradient-to-tr from-cyber-black/80 to-white/5 pointer-events-none" />
             
             {/* Dynamic Product Renderings with user image nested */}
@@ -442,7 +450,7 @@ export function Customization() {
                 {supportsLiveTemplatePreview ? (
                   <div
                     className={cn(
-                      "relative w-full max-w-[34rem] selection-none transition-all duration-300",
+                      "relative h-full max-h-full w-auto max-w-full selection-none transition-all duration-300",
                       previewLoading && "opacity-60 scale-[0.99]"
                     )}
                     style={{
@@ -553,19 +561,19 @@ export function Customization() {
             )}
 
             {/* Quick interactive buttons */}
-            <div className="absolute bottom-6 right-6 flex items-center gap-2">
+            <div className="absolute bottom-4 right-4 sm:bottom-6 sm:right-6 flex items-center gap-2">
               <button 
                 onClick={() => setIsPreviewOpen(true)}
-                className="p-3 rounded-full bg-cyber-black/80 border border-white/5 text-gray-400 hover:text-white transition-colors"
+                className="p-2.5 sm:p-3 rounded-full bg-cyber-black/80 border border-white/5 text-gray-400 hover:text-white transition-colors"
                 title="View original high-res"
               >
                 <Maximize2 size={16} />
               </button>
             </div>
 
-            <div className="absolute bottom-6 left-6 bg-cyber-black/80 border border-white/5 rounded-lg px-3 py-1.5 flex items-center gap-2">
+            <div className="absolute bottom-4 left-4 sm:bottom-6 sm:left-6 bg-cyber-black/80 border border-white/5 rounded-lg px-2.5 sm:px-3 py-1.5 flex items-center gap-2 max-w-[70%]">
               <Layers size={14} className="text-neon-blue animate-pulse" />
-              <span className="text-[9px] font-mono tracking-widest text-[#9ca3af] uppercase">
+              <span className="text-[8px] sm:text-[9px] font-mono tracking-widest text-[#9ca3af] uppercase leading-tight">
                 {previewLoading ? 'Finalizing backend render' : 'Live preview mode active'}
               </span>
             </div>
@@ -577,10 +585,136 @@ export function Customization() {
             </div>
           )}
 
-          <div className="glass-card p-6 border-white/5 text-center flex flex-col items-center justify-center">
+          {customization.basePlacement && (
+            <div className="lg:hidden glass-card border-white/10 p-4 space-y-4">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-[9px] font-bold uppercase tracking-[0.3em] text-neon-blue">Live Adjustment Deck</p>
+                  <p className="mt-1 text-[10px] uppercase tracking-widest text-gray-500">
+                    Move and resize the design while this preview stays visible.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setOffsetX(0);
+                    setOffsetY(0);
+                    setScalePercent(100);
+                    setAppliedCropOverride(null);
+                    setDraftCropRect({ left: 0, top: 0, width: 100, height: 100 });
+                  }}
+                  className="shrink-0 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-[9px] font-extrabold uppercase tracking-widest text-gray-300 transition-all hover:border-white/20 hover:text-white"
+                >
+                  Reset
+                </button>
+              </div>
+
+              <div className="space-y-4">
+                <div>
+                  <div className="mb-2 flex items-center justify-between text-[9px] uppercase tracking-widest text-gray-500">
+                    <span className="inline-flex items-center gap-2">
+                      <Move size={12} />
+                      Horizontal
+                    </span>
+                    <span>{offsetX > 0 ? `+${offsetX}` : offsetX}px</span>
+                  </div>
+                  <input
+                    type="range"
+                    min={-520}
+                    max={520}
+                    step={10}
+                    value={offsetX}
+                    onChange={(event) => setOffsetX(Number(event.target.value))}
+                    className="w-full accent-[var(--color-neon-blue)]"
+                  />
+                </div>
+
+                <div>
+                  <div className="mb-2 flex items-center justify-between text-[9px] uppercase tracking-widest text-gray-500">
+                    <span className="inline-flex items-center gap-2">
+                      <Move size={12} />
+                      Vertical
+                    </span>
+                    <span>{offsetY > 0 ? `+${offsetY}` : offsetY}px</span>
+                  </div>
+                  <input
+                    type="range"
+                    min={-620}
+                    max={620}
+                    step={10}
+                    value={offsetY}
+                    onChange={(event) => setOffsetY(Number(event.target.value))}
+                    className="w-full accent-[var(--color-neon-purple)]"
+                  />
+                </div>
+
+                <div>
+                  <div className="mb-2 flex items-center justify-between text-[9px] uppercase tracking-widest text-gray-500">
+                    <span className="inline-flex items-center gap-2">
+                      <Scaling size={12} />
+                      Scale
+                    </span>
+                    <span>{scalePercent}%</span>
+                  </div>
+                  <input
+                    type="range"
+                    min={20}
+                    max={320}
+                    step={5}
+                    value={scalePercent}
+                    onChange={(event) => setScalePercent(Number(event.target.value))}
+                    className="w-full accent-[var(--color-neon-pink)]"
+                  />
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                <div className="flex flex-col items-start gap-3">
+                  <div>
+                    <label className="flex items-center gap-2 text-[8px] font-bold text-gray-400 uppercase tracking-[0.3em] mb-2">
+                      <Crop size={12} />
+                      Design Crop
+                    </label>
+                    <p className="text-[9px] uppercase tracking-widest text-gray-500">
+                      {hasAppliedCrop
+                        ? `Crop applied • ${Math.round(appliedCropOverride?.width ?? 100)} by ${Math.round(appliedCropOverride?.height ?? 100)}`
+                        : 'Full design is currently visible'}
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDraftCropRect(appliedCropOverride ?? { left: 0, top: 0, width: 100, height: 100 });
+                        setIsCropStudioOpen(true);
+                      }}
+                      className="px-4 py-2 text-[9px] font-extrabold uppercase tracking-widest rounded-lg border border-white/10 bg-white/5 text-gray-300 hover:text-white hover:border-white/20 transition-all"
+                    >
+                      {hasAppliedCrop ? 'Edit Crop' : 'Open Crop Studio'}
+                    </button>
+                    {hasAppliedCrop && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setAppliedCropOverride(null);
+                          setDraftCropRect({ left: 0, top: 0, width: 100, height: 100 });
+                        }}
+                        className="px-4 py-2 text-[9px] font-extrabold uppercase tracking-widest rounded-lg border border-neon-pink/30 bg-neon-pink/10 text-neon-pink hover:bg-neon-pink hover:text-white transition-all"
+                      >
+                        Clear Crop
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div className="glass-card p-6 border-white/5 text-center flex-col items-center justify-center hidden sm:flex">
              <span className="inline-block w-2.5 h-2.5 rounded-full bg-emerald-500 animate-ping mb-3" />
              <p className="text-xs uppercase tracking-wider font-bold text-white mb-1">Generated by you. Printed for you.</p>
              <p className="text-[10px] text-gray-500 uppercase tracking-widest">Turn your customized neural idea into premium wearable and wall-ready art.</p>
+          </div>
           </div>
         </section>
 
@@ -590,16 +724,16 @@ export function Customization() {
             <span className="text-[10px] font-mono tracking-[0.4em] text-neon-blue uppercase mb-2 block">
               Configuration Module
             </span>
-            <h1 className="text-4xl font-display font-black uppercase tracking-widest text-white mb-2">
+            <h1 className="text-3xl sm:text-4xl font-display font-black uppercase tracking-widest text-white mb-2">
               {customization.productType} Setup
             </h1>
-            <p className="text-xs text-gray-400 leading-relaxed uppercase tracking-wider max-w-md pb-6 border-b border-white/5">
+            <p className="text-[10px] sm:text-xs text-gray-400 leading-relaxed uppercase tracking-wider max-w-md pb-6 border-b border-white/5">
               Customized wrapping of prompt creation: <span className="text-white">"{customization.userPrompt}"</span>. Your specifications map straight into stateful print queues.
             </p>
 
-            <div className="space-y-8 py-8">
+            <div className="space-y-6 sm:space-y-8 py-6 sm:py-8">
               {customization.basePlacement && (
-                <div className="space-y-6 border-b border-white/5 pb-8">
+                <div className="hidden lg:block space-y-5 sm:space-y-6 border-b border-white/5 pb-6 sm:pb-8">
                   <div>
                     <label className="flex items-center gap-2 text-[8px] font-bold text-gray-400 uppercase tracking-[0.3em] mb-3">
                       <Move size={12} />
@@ -660,7 +794,7 @@ export function Customization() {
                   </div>
 
                   <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-                    <div className="flex items-center justify-between gap-4">
+                    <div className="flex flex-col items-start gap-4 sm:flex-row sm:items-center sm:justify-between">
                       <div>
                         <label className="flex items-center gap-2 text-[8px] font-bold text-gray-400 uppercase tracking-[0.3em] mb-2">
                           <Crop size={12} />
@@ -672,7 +806,7 @@ export function Customization() {
                             : 'Full design is currently visible'}
                         </p>
                       </div>
-                      <div className="flex flex-wrap gap-2 justify-end">
+                      <div className="flex flex-wrap gap-2 justify-start sm:justify-end">
                         <button
                           type="button"
                           onClick={() => {
@@ -708,7 +842,7 @@ export function Customization() {
                       setAppliedCropOverride(null);
                       setDraftCropRect({ left: 0, top: 0, width: 100, height: 100 });
                     }}
-                    className="px-4 py-2 text-[9px] font-extrabold uppercase tracking-widest rounded-lg border border-white/10 bg-white/5 text-gray-300 hover:text-white hover:border-white/20 transition-all"
+                    className="w-full sm:w-auto px-4 py-2.5 text-[9px] font-extrabold uppercase tracking-widest rounded-lg border border-white/10 bg-white/5 text-gray-300 hover:text-white hover:border-white/20 transition-all"
                   >
                     Reset Placement
                   </button>
@@ -770,7 +904,7 @@ export function Customization() {
                 <label className="block text-[8px] font-bold text-gray-400 uppercase tracking-[0.3em] mb-3">
                   Production Quantity
                 </label>
-                <div className="inline-flex items-center gap-3 bg-white/5 border border-white/10 rounded-xl p-1.5">
+                  <div className="inline-flex items-center gap-3 bg-white/5 border border-white/10 rounded-xl p-1.5">
                   <button 
                     onClick={() => setQuantity(q => Math.max(1, q - 1))}
                     className="w-10 h-10 rounded-lg hover:bg-white/5 text-lg font-bold flex items-center justify-center transition-colors"
@@ -789,7 +923,7 @@ export function Customization() {
             </div>
 
             {/* Quality & Delivery Assurance badges */}
-            <div className="grid grid-cols-2 gap-4 pb-8 border-b border-white/5">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pb-8 border-b border-white/5">
               <div className="flex items-start gap-3 bg-white/5 p-4 rounded-xl">
                 <Truck className="text-neon-blue mt-0.5" size={16} />
                 <div>
@@ -807,13 +941,13 @@ export function Customization() {
             </div>
           </div>
 
-          <div className="pt-8">
-            <div className="flex items-center justify-between mb-6">
+          <div className="pt-6 sm:pt-8">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between mb-6">
               <div>
                 <span className="text-[10px] text-gray-500 uppercase tracking-widest block">Total Cost Price (VAT inc)</span>
                 <span className="text-4xl font-display font-black text-white">${totalPrice}</span>
               </div>
-              <div className="text-right">
+              <div className="sm:text-right">
                 <span className="text-[8px] text-neon-blue uppercase font-bold tracking-widest bg-neon-blue/10 px-2 py-1 rounded">
                   {quantity > 1 ? `${quantity} items synced` : 'Single Run Item'}
                 </span>
@@ -856,15 +990,15 @@ export function Customization() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 flex items-center justify-center bg-cyber-black/85 px-6 py-10 backdrop-blur-sm"
+            className="fixed inset-0 z-50 overflow-y-auto bg-cyber-black/85 px-4 sm:px-6 py-4 sm:py-10 backdrop-blur-sm"
           >
             <motion.div
               initial={{ opacity: 0, y: 24, scale: 0.98 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: 24, scale: 0.98 }}
-              className="w-full max-w-5xl rounded-[2rem] border border-white/10 bg-[#090b10] shadow-[0_30px_120px_rgba(0,0,0,0.6)]"
+              className="relative my-auto mx-auto w-full max-w-5xl rounded-[2rem] border border-white/10 bg-[#090b10] shadow-[0_30px_120px_rgba(0,0,0,0.6)] max-h-[calc(100vh-2rem)] sm:max-h-[calc(100vh-5rem)] overflow-y-auto"
             >
-              <div className="flex items-center justify-between gap-4 border-b border-white/10 px-8 py-6">
+              <div className="sticky top-0 z-10 flex items-center justify-between gap-4 border-b border-white/10 bg-[#090b10]/95 px-5 sm:px-8 py-5 sm:py-6 backdrop-blur-md">
                 <div>
                   <p className="text-[10px] font-bold uppercase tracking-[0.35em] text-neon-blue">Crop Studio</p>
                   <h3 className="mt-2 text-2xl font-display font-black uppercase tracking-widest text-white">
@@ -883,7 +1017,7 @@ export function Customization() {
                 </button>
               </div>
 
-              <div className="grid grid-cols-1 gap-8 px-8 py-8 lg:grid-cols-[minmax(0,1.2fr)_minmax(320px,0.8fr)]">
+              <div className="grid grid-cols-1 gap-6 sm:gap-8 px-5 sm:px-8 py-5 sm:py-8 lg:grid-cols-[minmax(0,1.2fr)_minmax(320px,0.8fr)]">
                 <div className="space-y-4">
                   <div className="rounded-[1.75rem] border border-white/10 bg-cyber-black/60 p-6">
                     <div

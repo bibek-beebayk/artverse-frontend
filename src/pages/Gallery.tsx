@@ -55,21 +55,21 @@ export function Gallery() {
   }, [activeCategory]);
 
   return (
-    <div className="max-w-7xl mx-auto px-6 py-12">
-      <header className="mb-16 text-center">
-        <h1 className="text-5xl md:text-7xl font-display font-black text-white uppercase tracking-tighter mb-4">
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 py-10 sm:py-12">
+      <header className="mb-12 sm:mb-16 text-center">
+        <h1 className="text-4xl sm:text-5xl md:text-7xl font-display font-black text-white uppercase tracking-tighter mb-4">
           Digital <span className="text-neon-purple neon-text-glow">Archives</span>
         </h1>
-        <p className="text-gray-500 uppercase tracking-[0.3em] text-xs font-bold mb-12">Collection Vol. 01 / AI Generated Realities</p>
+        <p className="text-gray-500 uppercase tracking-[0.25em] sm:tracking-[0.3em] text-[10px] sm:text-xs font-bold mb-8 sm:mb-12">Collection Vol. 01 / AI Generated Realities</p>
         
         {/* Filters */}
-        <div className="flex flex-wrap items-center justify-center gap-4">
+        <div className="flex flex-wrap items-center justify-center gap-2 sm:gap-4">
           {categories.map((cat) => (
             <button
               key={cat}
               onClick={() => setActiveCategory(cat)}
               className={cn(
-                "px-6 py-2 rounded-full border text-xs font-bold uppercase tracking-widest transition-all",
+                "px-4 sm:px-6 py-2 rounded-full border text-[10px] sm:text-xs font-bold uppercase tracking-widest transition-all",
                 activeCategory === cat 
                   ? "bg-neon-purple border-neon-purple text-white neon-glow-purple" 
                   : "bg-transparent border-white/10 text-gray-500 hover:text-white hover:border-white/30"
