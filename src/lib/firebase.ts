@@ -5,7 +5,11 @@ import firebaseConfig from '../../firebase-applet-config.json';
 
 // Initialize Firebase SDK
 const app = initializeApp(firebaseConfig);
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+const firestoreDatabaseId =
+  'firestoreDatabaseId' in firebaseConfig && typeof firebaseConfig.firestoreDatabaseId === 'string'
+    ? firebaseConfig.firestoreDatabaseId
+    : undefined;
+export const db = firestoreDatabaseId ? getFirestore(app, firestoreDatabaseId) : getFirestore(app);
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
 
@@ -68,6 +72,13 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
 
 // Authentication Helpers
 export const loginWithGoogle = () => signInWithPopup(auth, googleProvider);
+export const getFirebaseIdToken = async () => {
+  if (!auth.currentUser) {
+    throw new Error('No authenticated Firebase user found.');
+  }
+
+  return auth.currentUser.getIdToken(true);
+};
 export const logout = () => signOut(auth);
 
 // Test connection on boot

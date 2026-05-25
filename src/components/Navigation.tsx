@@ -22,7 +22,6 @@ const navLinks = [
   { name: 'Home', path: '/' },
   { name: 'Gallery', path: '/gallery' },
   { name: 'Dream', path: '/generator' },
-  { name: 'Videos', path: '/videos' },
   { name: 'Favs', path: '/favorites' },
   { name: 'About', path: '/about' },
   { name: 'Shop', path: '/shop' },
@@ -30,7 +29,7 @@ const navLinks = [
 ];
 
 export function Navbar() {
-  const { user, signIn, signOut } = useAuth();
+  const { user, signIn, signOut, authError, clearAuthError } = useAuth();
   const { cart } = useCart();
   const [isOpen, setIsOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
@@ -42,6 +41,34 @@ export function Navbar() {
     window.addEventListener('scroll', handleScroll);
     return () => window.removeEventListener('scroll', handleScroll);
   }, []);
+
+  useEffect(() => {
+    if (!authError) {
+      return;
+    }
+
+    const timeout = window.setTimeout(() => {
+      clearAuthError();
+    }, 7000);
+
+    return () => window.clearTimeout(timeout);
+  }, [authError, clearAuthError]);
+
+  useEffect(() => {
+    const { body, documentElement } = document;
+    const previousBodyOverflow = body.style.overflow;
+    const previousHtmlOverflow = documentElement.style.overflow;
+
+    if (isOpen) {
+      body.style.overflow = 'hidden';
+      documentElement.style.overflow = 'hidden';
+    }
+
+    return () => {
+      body.style.overflow = previousBodyOverflow;
+      documentElement.style.overflow = previousHtmlOverflow;
+    };
+  }, [isOpen]);
 
   const totalCartItems = cart.reduce((total, item) => total + item.quantity, 0);
 
@@ -216,7 +243,7 @@ export function Navbar() {
           </div>
         </div>
 
-        <div className="flex items-center gap-4 md:hidden text-white">
+        <div className="flex items-center gap-3 md:hidden text-white">
           <Link
             to="/cart"
             className="p-2 text-gray-400 hover:text-neon-blue transition-colors relative flex items-center focus:outline-none"
@@ -229,9 +256,22 @@ export function Navbar() {
             )}
           </Link>
 
+          {!user && (
+            <button
+              onClick={signIn}
+              className="rounded-full border border-white/15 bg-white px-3 py-1.5 text-[9px] font-black uppercase tracking-[0.22em] text-cyber-black shadow-[0_0_12px_rgba(255,255,255,0.18)] transition-all hover:bg-neon-blue hover:text-white"
+            >
+              Login
+            </button>
+          )}
+
           {user && (
             <div className="w-8 h-8 rounded-full overflow-hidden border border-neon-purple">
-              <img src={user.photoURL || ''} alt="" className="w-full h-full object-cover" />
+              <img
+                src={user.photoURL || `https://ui-avatars.com/api/?name=${user.displayName || user.email || 'Artverse User'}`}
+                alt={user.displayName || user.email || 'Authenticated user'}
+                className="w-full h-full object-cover"
+              />
             </div>
           )}
           <button className="text-white p-2" onClick={() => setIsOpen(!isOpen)}>
@@ -246,8 +286,53 @@ export function Navbar() {
             initial={{ opacity: 0, y: -20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -20 }}
-            className="absolute top-full left-0 right-0 bg-cyber-black/95 backdrop-blur-xl border-b border-white/10 p-6 flex flex-col gap-4 md:hidden z-50 text-white"
+            className="absolute top-full left-0 right-0 max-h-[calc(100vh-88px)] overflow-y-auto overscroll-contain bg-cyber-black/95 backdrop-blur-xl border-b border-white/10 p-6 flex flex-col gap-4 md:hidden z-50 text-white touch-pan-y"
           >
+            <div className="rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-4">
+              {user ? (
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="w-10 h-10 rounded-full overflow-hidden border border-neon-purple shrink-0">
+                      <img
+                        src={user.photoURL || `https://ui-avatars.com/api/?name=${user.displayName || user.email || 'Artverse User'}`}
+                        alt={user.displayName || user.email || 'Authenticated user'}
+                        className="w-full h-full object-cover"
+                      />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-[10px] font-mono uppercase tracking-[0.22em] text-gray-500">Authorized Entity</p>
+                      <p className="truncate text-xs font-bold text-white">
+                        {user.displayName || user.email}
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => {
+                      signOut();
+                      setIsOpen(false);
+                    }}
+                    className="rounded-full border border-neon-pink/25 px-3 py-2 text-[10px] font-black uppercase tracking-[0.18em] text-neon-pink transition-all hover:bg-neon-pink hover:text-white"
+                  >
+                    Logout
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <p className="text-[10px] font-mono uppercase tracking-[0.24em] text-gray-500">Account Access</p>
+                  <button
+                    onClick={() => {
+                      signIn();
+                      setIsOpen(false);
+                    }}
+                    className="flex w-full items-center justify-center gap-3 rounded-2xl bg-white px-4 py-3 text-[10px] font-black uppercase tracking-[0.22em] text-cyber-black transition-all hover:bg-neon-blue hover:text-white"
+                  >
+                    <LogIn size={16} />
+                    Login With Google
+                  </button>
+                </div>
+              )}
+            </div>
+
             <NavLink
               to="/"
               onClick={() => setIsOpen(false)}
@@ -315,9 +400,33 @@ export function Navbar() {
                 className="flex items-center gap-3 text-neon-blue font-bold uppercase tracking-widest text-sm py-2"
               >
                 <LogIn size={18} />
-                Connect Identity
+                Login
               </button>
             )}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {authError && (
+          <motion.div
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            className="max-w-7xl mx-auto mt-3"
+          >
+            <div className="flex items-start justify-between gap-3 rounded-2xl border border-neon-pink/30 bg-neon-pink/10 px-4 py-3 text-neon-pink backdrop-blur-md">
+              <p className="text-[10px] sm:text-xs font-bold uppercase tracking-[0.18em] sm:tracking-[0.22em]">
+                {authError}
+              </p>
+              <button
+                onClick={clearAuthError}
+                className="shrink-0 rounded-full border border-neon-pink/30 p-1 text-neon-pink hover:bg-neon-pink hover:text-white transition-all"
+                aria-label="Dismiss login error"
+              >
+                <X size={14} />
+              </button>
+            </div>
           </motion.div>
         )}
       </AnimatePresence>

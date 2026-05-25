@@ -97,12 +97,19 @@ function getPlacementFromCandidate(candidate: unknown): PlacementOverride | null
   const y = Number(placement.y);
   const width = Number(placement.width);
   const height = Number(placement.height);
+  const cornerRadiusRaw = placement.corner_radius ?? placement.cornerRadius;
 
   if ([x, y, width, height].some((value) => Number.isNaN(value))) {
     return null;
   }
 
-  return { x, y, width, height };
+  const normalizedPlacement: PlacementOverride = { x, y, width, height };
+  const cornerRadius = Number(cornerRadiusRaw);
+  if (!Number.isNaN(cornerRadius)) {
+    normalizedPlacement.cornerRadius = cornerRadius;
+  }
+
+  return normalizedPlacement;
 }
 
 export function Generator() {

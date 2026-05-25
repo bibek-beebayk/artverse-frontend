@@ -100,6 +100,27 @@ interface MaintenanceAccessResponse extends MaintenanceStatusResponse {
   detail?: string;
 }
 
+export interface BackendAuthenticatedUser {
+  id: number;
+  username: string;
+  email: string;
+  display_name: string;
+  avatar: string;
+  is_artist: boolean;
+}
+
+interface GoogleLoginResponse {
+  access: string;
+  refresh: string;
+  user: BackendAuthenticatedUser;
+}
+
+interface BackendFavorite {
+  id: number;
+  artwork: BackendArtwork;
+  created_at: string;
+}
+
 interface MockupRenderMutationResponse {
   created: boolean;
   render: BackendMockupRender;
@@ -108,6 +129,8 @@ interface MockupRenderMutationResponse {
 
 const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, "") || "http://localhost:8000/api";
+const ACCESS_TOKEN_STORAGE_KEY = "artverse_backend_access_token";
+const REFRESH_TOKEN_STORAGE_KEY = "artverse_backend_refresh_token";
 
 function getApiOrigin() {
   try {
@@ -129,23 +152,102 @@ function resolveAssetUrl(url: string | null | undefined) {
   return new URL(url, getApiOrigin()).toString();
 }
 
-async function fetchJson<T>(path: string): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}${path}`);
-  if (!response.ok) {
-    throw new Error(`Request failed with status ${response.status}`);
-  }
-  return response.json() as Promise<T>;
+export function getBackendAccessToken() {
+  return localStorage.getItem(ACCESS_TOKEN_STORAGE_KEY);
 }
 
-async function sendJson<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}${path}`, init);
+function getBackendRefreshToken() {
+  return localStorage.getItem(REFRESH_TOKEN_STORAGE_KEY);
+}
+
+export function setBackendAuthTokens(accessToken: string, refreshToken: string) {
+  localStorage.setItem(ACCESS_TOKEN_STORAGE_KEY, accessToken);
+  localStorage.setItem(REFRESH_TOKEN_STORAGE_KEY, refreshToken);
+}
+
+export function clearBackendAuthTokens() {
+  localStorage.removeItem(ACCESS_TOKEN_STORAGE_KEY);
+  localStorage.removeItem(REFRESH_TOKEN_STORAGE_KEY);
+}
+
+async function refreshBackendAccessToken() {
+  const refreshToken = getBackendRefreshToken();
+  if (!refreshToken) {
+    return null;
+  }
+
+  const response = await fetch(`${API_BASE_URL}/auth/token/refresh/`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ refresh: refreshToken }),
+  });
+
+  if (!response.ok) {
+    clearBackendAuthTokens();
+    return null;
+  }
+
+  const data = (await response.json()) as { access?: string };
+  if (!data.access) {
+    clearBackendAuthTokens();
+    return null;
+  }
+
+  setBackendAuthTokens(data.access, refreshToken);
+  return data.access;
+}
+
+async function requestJson<T>(path: string, init?: RequestInit, retryOn401 = true): Promise<T> {
+  const headers = new Headers(init?.headers);
+  if (!headers.has("Content-Type") && init?.body) {
+    headers.set("Content-Type", "application/json");
+  }
+
+  const accessToken = getBackendAccessToken();
+  if (accessToken && !headers.has("Authorization")) {
+    headers.set("Authorization", `Bearer ${accessToken}`);
+  }
+
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    ...init,
+    headers,
+  });
   const data = (await response.json().catch(() => ({}))) as T & { detail?: string };
+
+  if (response.status === 401 && retryOn401 && getBackendRefreshToken()) {
+    const nextAccessToken = await refreshBackendAccessToken();
+    if (nextAccessToken) {
+      const retryHeaders = new Headers(init?.headers);
+      if (!retryHeaders.has("Content-Type") && init?.body) {
+        retryHeaders.set("Content-Type", "application/json");
+      }
+      retryHeaders.set("Authorization", `Bearer ${nextAccessToken}`);
+      return requestJson<T>(
+        path,
+        {
+          ...init,
+          headers: retryHeaders,
+        },
+        false,
+      );
+    }
+  }
 
   if (!response.ok) {
     throw new Error(data.detail || `Request failed with status ${response.status}`);
   }
 
   return data as T;
+}
+
+async function fetchJson<T>(path: string): Promise<T> {
+  return requestJson<T>(path);
+}
+
+async function sendJson<T>(path: string, init?: RequestInit): Promise<T> {
+  return requestJson<T>(path, init);
 }
 
 function mapArtwork(artwork: BackendArtwork): Artwork {
@@ -264,6 +366,22 @@ export async function getFeaturedArtworks() {
   return artworks.map(mapArtwork);
 }
 
+export async function getFavorites() {
+  const favorites = await fetchJson<BackendFavorite[]>("/gallery/favorites/");
+  return favorites.map((favorite) => ({
+    id: String(favorite.id),
+    artwork: mapArtwork(favorite.artwork),
+    createdAt: favorite.created_at,
+  }));
+}
+
+export async function toggleFavoriteBackend(artworkId: number) {
+  return sendJson<{ favorited: boolean }>("/gallery/favorites/toggle/", {
+    method: "POST",
+    body: JSON.stringify({ artwork_id: artworkId }),
+  });
+}
+
 export async function getVideos() {
   const videos = await fetchJson<BackendVideoClip[]>("/gallery/videos/");
   return videos.map(mapVideoClip);
@@ -338,9 +456,13 @@ export async function getMaintenanceStatus(token?: string) {
 export async function requestMaintenanceAccess(accessKey: string) {
   return sendJson<MaintenanceAccessResponse>("/auth/maintenance-access/", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
     body: JSON.stringify({ access_key: accessKey }),
+  });
+}
+
+export async function loginWithGoogleBackend(idToken: string) {
+  return sendJson<GoogleLoginResponse>("/auth/google-login/", {
+    method: "POST",
+    body: JSON.stringify({ id_token: idToken }),
   });
 }

@@ -48,12 +48,19 @@ function normalizePlacement(placement: ActiveCustomization['basePlacement']): Pl
   const y = Number(placement.y);
   const width = Number(placement.width);
   const height = Number(placement.height);
+  const cornerRadius = Number(placement.cornerRadius ?? 0);
 
   if ([x, y, width, height].some((value) => Number.isNaN(value))) {
     return null;
   }
 
-  return { x, y, width, height };
+  return {
+    x,
+    y,
+    width,
+    height,
+    cornerRadius: Number.isNaN(cornerRadius) ? 0 : cornerRadius,
+  };
 }
 
 export function Customization() {
@@ -85,6 +92,7 @@ export function Customization() {
   const [offsetX, setOffsetX] = useState(0);
   const [offsetY, setOffsetY] = useState(0);
   const [scalePercent, setScalePercent] = useState(100);
+  const [cornerRadius, setCornerRadius] = useState(12);
   const [isCropStudioOpen, setIsCropStudioOpen] = useState(false);
   const [isCropDragging, setIsCropDragging] = useState(false);
   const [appliedCropOverride, setAppliedCropOverride] = useState<CropOverride | null>(null);
@@ -124,6 +132,7 @@ export function Customization() {
       setOffsetX(0);
       setOffsetY(0);
       setScalePercent(100);
+      setCornerRadius(customization.basePlacement?.cornerRadius ?? 12);
       setIsCropStudioOpen(false);
       setAppliedCropOverride(null);
       setDraftCropRect({ left: 0, top: 0, width: 100, height: 100 });
@@ -146,8 +155,9 @@ export function Customization() {
       y: Math.round(customization.basePlacement.y + offsetY),
       width: Math.max(80, Math.round(customization.basePlacement.width * (scalePercent / 100))),
       height: Math.max(80, Math.round(customization.basePlacement.height * (scalePercent / 100))),
+      cornerRadius: Math.max(0, Math.round(cornerRadius)),
     };
-  }, [customization, offsetX, offsetY, scalePercent]);
+  }, [cornerRadius, customization, offsetX, offsetY, scalePercent]);
 
   const previewPlacementStyle = useMemo(() => {
     if (!previewResolvedPlacement || !templateDimensions) {
@@ -486,7 +496,7 @@ export function Customization() {
                         style={{
                           ...previewPlacementStyle,
                           opacity: 0.96,
-                          borderRadius: '12px',
+                          borderRadius: `${previewResolvedPlacement.cornerRadius ?? 0}px`,
                         }}
                       >
                         {hasAppliedCrop && previewCropFrameStyle ? (
@@ -600,6 +610,7 @@ export function Customization() {
                     setOffsetX(0);
                     setOffsetY(0);
                     setScalePercent(100);
+                    setCornerRadius(customization.basePlacement?.cornerRadius ?? 12);
                     setAppliedCropOverride(null);
                     setDraftCropRect({ left: 0, top: 0, width: 100, height: 100 });
                   }}
@@ -666,6 +677,25 @@ export function Customization() {
                     className="w-full accent-[var(--color-neon-pink)]"
                   />
                 </div>
+
+                <div>
+                  <div className="mb-2 flex items-center justify-between text-[9px] uppercase tracking-widest text-gray-500">
+                    <span className="inline-flex items-center gap-2">
+                      <Sparkles size={12} />
+                      Corner Radius
+                    </span>
+                    <span>{cornerRadius}px</span>
+                  </div>
+                  <input
+                    type="range"
+                    min={0}
+                    max={120}
+                    step={2}
+                    value={cornerRadius}
+                    onChange={(event) => setCornerRadius(Number(event.target.value))}
+                    className="w-full accent-[var(--color-neon-blue)]"
+                  />
+                </div>
               </div>
 
               <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
@@ -727,9 +757,9 @@ export function Customization() {
             <h1 className="text-3xl sm:text-4xl font-display font-black uppercase tracking-widest text-white mb-2">
               {customization.productType} Setup
             </h1>
-            <p className="text-[10px] sm:text-xs text-gray-400 leading-relaxed uppercase tracking-wider max-w-md pb-6 border-b border-white/5">
+            {/* <p className="text-[10px] sm:text-xs text-gray-400 leading-relaxed uppercase tracking-wider max-w-md pb-6 border-b border-white/5">
               Customized wrapping of prompt creation: <span className="text-white">"{customization.userPrompt}"</span>. Your specifications map straight into stateful print queues.
-            </p>
+            </p> */}
 
             <div className="space-y-6 sm:space-y-8 py-6 sm:py-8">
               {customization.basePlacement && (
@@ -790,6 +820,26 @@ export function Customization() {
                       value={scalePercent}
                       onChange={(event) => setScalePercent(Number(event.target.value))}
                       className="w-full accent-[var(--color-neon-pink)]"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="flex items-center gap-2 text-[8px] font-bold text-gray-400 uppercase tracking-[0.3em] mb-3">
+                      <Sparkles size={12} />
+                      Corner Radius
+                    </label>
+                    <div className="flex items-center justify-between text-[9px] uppercase tracking-widest text-gray-500 mb-2">
+                      <span>Rounded Corners</span>
+                      <span>{cornerRadius}px</span>
+                    </div>
+                    <input
+                      type="range"
+                      min={0}
+                      max={120}
+                      step={2}
+                      value={cornerRadius}
+                      onChange={(event) => setCornerRadius(Number(event.target.value))}
+                      className="w-full accent-[var(--color-neon-blue)]"
                     />
                   </div>
 

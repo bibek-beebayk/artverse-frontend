@@ -63,6 +63,7 @@ export interface PlacementOverride {
   y: number;
   width: number;
   height: number;
+  cornerRadius?: number;
 }
 
 export interface CropOverride {
