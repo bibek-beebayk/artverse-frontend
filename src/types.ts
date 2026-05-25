@@ -17,6 +17,8 @@ export interface Artwork {
   backendArtworkId?: number;
   title: string;
   category: string;
+  collectionName?: string;
+  collectionSlug?: string;
   description: string;
   tags: string[];
   suitableProducts: string[];
@@ -28,6 +30,13 @@ export interface Artwork {
   isFeatured: boolean;
   isPremium: boolean;
   createdAt: string;
+}
+
+export interface CollectionSummary {
+  id: string;
+  name: string;
+  slug: string;
+  description?: string;
 }
 
 export interface VideoClip {

@@ -18,8 +18,8 @@ import { cn } from '../lib/utils.ts';
 import { useAuth } from '../context/AuthContext.tsx';
 import { getArtworks, getGalleryCategories, getVideos } from '../lib/api.ts';
 
-const IMAGE_ITEMS_PER_PAGE = 6;
-const VIDEO_ITEMS_PER_PAGE = 4;
+const IMAGE_ITEMS_PER_PAGE = 16;
+const VIDEO_ITEMS_PER_PAGE = 16;
 
 type MediaTab = 'images' | 'videos';
 

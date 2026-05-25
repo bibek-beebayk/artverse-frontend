@@ -16,7 +16,8 @@ import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils.ts';
 import { useAuth } from '../context/AuthContext.tsx';
 import { useCart } from '../context/CartContext.tsx';
-import { CATEGORIES } from '../constants.ts';
+import type { CollectionSummary } from '../types.ts';
+import { getCollections } from '../lib/api.ts';
 
 const navLinks = [
   { name: 'Home', path: '/' },
@@ -35,11 +36,25 @@ export function Navbar() {
   const [scrolled, setScrolled] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [showCollectionsDropdown, setShowCollectionsDropdown] = useState(false);
+  const [collections, setCollections] = useState<CollectionSummary[]>([]);
 
   useEffect(() => {
     const handleScroll = () => setScrolled(window.scrollY > 20);
     window.addEventListener('scroll', handleScroll);
     return () => window.removeEventListener('scroll', handleScroll);
+  }, []);
+
+  useEffect(() => {
+    const loadCollections = async () => {
+      try {
+        setCollections(await getCollections());
+      } catch (error) {
+        console.error('Failed to load backend collections:', error);
+        setCollections([]);
+      }
+    };
+
+    void loadCollections();
   }, []);
 
   useEffect(() => {
@@ -129,25 +144,27 @@ export function Navbar() {
                   >
                     <div className="px-3 py-2 border-b border-white/5 mb-1 flex items-center justify-between">
                       <span className="text-[9px] font-mono tracking-widest text-neon-blue uppercase">Stellar Drops</span>
-                      <span className="text-[8px] font-mono text-gray-500 uppercase">10 Realms</span>
+                      <span className="text-[8px] font-mono text-gray-500 uppercase">{collections.length} Sets</span>
                     </div>
 
                     <div className="grid grid-cols-1 max-h-[350px] overflow-y-auto pr-1">
-                      {CATEGORIES.map((cat) => (
+                      {collections.map((collection) => (
                         <Link
-                          key={cat.id}
-                          to={`/collections/${cat.id}`}
+                          key={collection.id}
+                          to={`/collections/${collection.slug}`}
                           onClick={() => setShowCollectionsDropdown(false)}
                           className="flex items-start gap-3 p-2 rounded-xl hover:bg-white/5 transition-all text-left"
                         >
-                          <div className="w-12 h-12 rounded-lg overflow-hidden shrink-0 border border-white/5">
-                            <img src={cat.imageUrl} alt="" className="w-full h-full object-cover" />
+                          <div className="w-12 h-12 rounded-lg shrink-0 border border-white/5 bg-white/[0.04] flex items-center justify-center text-neon-blue text-[11px] font-black uppercase tracking-[0.24em]">
+                            {collection.name.slice(0, 2)}
                           </div>
                           <div>
                             <h4 className="text-[11px] font-extrabold uppercase tracking-wider text-white hover:text-neon-blue transition-colors">
-                              {cat.name}
+                              {collection.name}
                             </h4>
-                            <p className="text-[9px] text-gray-500 line-clamp-1 mt-0.5 uppercase tracking-widest">{cat.bestFor}</p>
+                            <p className="text-[9px] text-gray-500 line-clamp-1 mt-0.5 uppercase tracking-widest">
+                              {collection.description || 'Backend collection'}
+                            </p>
                           </div>
                         </Link>
                       ))}
@@ -349,14 +366,14 @@ export function Navbar() {
             <div className="py-2 border-b border-white/5">
               <span className="text-[10px] font-mono tracking-widest text-neon-blue uppercase block mb-3">Re Drop Collections</span>
               <div className="grid grid-cols-2 gap-2 max-h-[140px] overflow-y-auto pr-1">
-                {CATEGORIES.map((cat) => (
+                {collections.map((collection) => (
                   <Link
-                    key={cat.id}
-                    to={`/collections/${cat.id}`}
+                    key={collection.id}
+                    to={`/collections/${collection.slug}`}
                     onClick={() => setIsOpen(false)}
                     className="text-[10px] uppercase font-bold tracking-wider text-gray-400 hover:text-white py-1 block"
                   >
-                    - {cat.name}
+                    - {collection.name}
                   </Link>
                 ))}
               </div>

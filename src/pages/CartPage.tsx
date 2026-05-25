@@ -16,20 +16,35 @@ import {
   PlusCircle,
   Clock
 } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { cn } from '../lib/utils.ts';
 
 export function CartPage() {
   const { cart, removeFromCart, updateCartQuantity, getRecommendations, addToCart } = useCart();
   const [checkoutSimulated, setCheckoutSimulated] = useState(false);
   const [checkoutSuccess, setCheckoutSuccess] = useState(false);
+  const [pendingDeleteItemId, setPendingDeleteItemId] = useState<string | null>(null);
 
   const subtotal = cart.reduce((acc, item) => acc + item.price * item.quantity, 0);
   const shipping = subtotal > 50 ? 0 : 5.99;
   const total = subtotal + shipping;
+  const pendingDeleteItem = cart.find((item) => item.id === pendingDeleteItemId) ?? null;
 
   // Recommendations mapping
   const upsellItems = getRecommendations(cart);
+
+  useEffect(() => {
+    if (!pendingDeleteItemId) {
+      return;
+    }
+
+    const originalOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+
+    return () => {
+      document.body.style.overflow = originalOverflow;
+    };
+  }, [pendingDeleteItemId]);
 
   const handleCheckout = () => {
     setCheckoutSimulated(true);
@@ -53,6 +68,23 @@ export function CartPage() {
       userPrompt: rec.userPrompt,
       originalImageUrl: rec.originalImageUrl
     });
+  };
+
+  const handleRequestRemove = (itemId: string) => {
+    setPendingDeleteItemId(itemId);
+  };
+
+  const handleConfirmRemove = () => {
+    if (!pendingDeleteItemId) {
+      return;
+    }
+
+    removeFromCart(pendingDeleteItemId);
+    setPendingDeleteItemId(null);
+  };
+
+  const handleCancelRemove = () => {
+    setPendingDeleteItemId(null);
   };
 
   if (checkoutSuccess) {
@@ -194,7 +226,7 @@ export function CartPage() {
                       </div>
 
                       <button 
-                        onClick={() => removeFromCart(item.id)}
+                        onClick={() => handleRequestRemove(item.id)}
                         className="p-2 border border-white/5 hover:border-neon-pink/30 hover:text-neon-pink rounded-lg transition-all"
                         title="Remove product"
                       >
@@ -338,6 +370,82 @@ export function CartPage() {
 
         </div>
       </div>
+
+      <AnimatePresence>
+        {pendingDeleteItem ? (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[120] flex items-center justify-center p-4"
+          >
+            <button
+              type="button"
+              aria-label="Close remove item confirmation"
+              onClick={handleCancelRemove}
+              className="absolute inset-0 bg-cyber-black/85 backdrop-blur-md"
+            />
+
+            <motion.div
+              initial={{ opacity: 0, scale: 0.96, y: 24 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.96, y: 24 }}
+              className="relative z-[121] w-full max-w-md rounded-3xl border border-white/10 bg-cyber-black/95 p-6 shadow-2xl sm:p-7"
+            >
+              <span className="mb-3 block text-[10px] font-mono uppercase tracking-[0.35em] text-neon-pink">
+                Confirm Removal
+              </span>
+              <h3 className="text-2xl font-display font-black uppercase tracking-widest text-white">
+                Delete This Cart Item?
+              </h3>
+              <p className="mt-3 text-xs uppercase tracking-wider leading-relaxed text-gray-400">
+                Remove your <span className="text-white">{pendingDeleteItem.productType}</span> built from
+                <span className="text-white"> "{pendingDeleteItem.userPrompt}"</span> from the cart?
+              </p>
+
+              <div className="mt-5 rounded-2xl border border-white/10 bg-white/5 p-4">
+                <div className="flex items-center gap-4">
+                  <div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-white/10 bg-cyber-black/60 p-2">
+                    <img
+                      src={pendingDeleteItem.mockupImageUrl}
+                      alt={pendingDeleteItem.productType}
+                      className="h-full w-full object-contain"
+                    />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-[10px] font-mono uppercase tracking-[0.3em] text-neon-blue">
+                      {pendingDeleteItem.productType}
+                    </p>
+                    <p className="mt-1 truncate text-sm font-bold uppercase tracking-wide text-white">
+                      AI Generated Mockup Run
+                    </p>
+                    <p className="mt-1 text-[10px] uppercase tracking-widest text-gray-500">
+                      Qty {pendingDeleteItem.quantity} • ${(pendingDeleteItem.price * pendingDeleteItem.quantity).toFixed(2)}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-6 flex flex-col gap-3 sm:flex-row">
+                <button
+                  type="button"
+                  onClick={handleCancelRemove}
+                  className="flex-1 rounded-2xl border border-white/10 bg-white/5 px-5 py-3 text-xs font-bold uppercase tracking-[0.28em] text-white transition-all hover:border-white/25"
+                >
+                  Keep Item
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmRemove}
+                  className="flex-1 rounded-2xl border border-neon-pink/40 bg-neon-pink/15 px-5 py-3 text-xs font-black uppercase tracking-[0.28em] text-neon-pink transition-all hover:bg-neon-pink hover:text-cyber-black"
+                >
+                  Remove Item
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
     </div>
   );
 }

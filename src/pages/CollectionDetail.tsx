@@ -1,10 +1,11 @@
-import { useState, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
-import { CATEGORIES, ARTWORKS } from '../constants.ts';
 import { useAuth } from '../context/AuthContext.tsx';
 import { ImageModal, ShareModal, SmartImage } from '../components/Common.tsx';
 import { cn } from '../lib/utils.ts';
+import { getArtworks, getCollections } from '../lib/api.ts';
+import type { Artwork, CollectionSummary } from '../types.ts';
 import { 
   Download, 
   Printer, 
@@ -25,34 +26,73 @@ type ProductFilter = 'All' | 'Wallpaper' | 'T-Shirt' | 'Canvas' | 'Mug' | 'Poste
 export function CollectionDetail() {
   const { collectionId } = useParams<{ collectionId: string }>();
   const { isFavorited, toggleFavorite } = useAuth();
+  const [collections, setCollections] = useState<CollectionSummary[]>([]);
+  const [artworks, setArtworks] = useState<Artwork[]>([]);
+  const [loading, setLoading] = useState(true);
   
   const [selectedFilter, setSelectedFilter] = useState<ProductFilter>('All');
-  const [selectedArt, setSelectedArt] = useState<typeof ARTWORKS[0] | null>(null);
-  const [shareArt, setShareArt] = useState<typeof ARTWORKS[0] | null>(null);
+  const [selectedArt, setSelectedArt] = useState<Artwork | null>(null);
+  const [shareArt, setShareArt] = useState<Artwork | null>(null);
   
   // Print Simulator Modal State
-  const [printSimulatorArt, setPrintSimulatorArt] = useState<typeof ARTWORKS[0] | null>(null);
+  const [printSimulatorArt, setPrintSimulatorArt] = useState<Artwork | null>(null);
   const [simulatedProduct, setSimulatedProduct] = useState<'Canvas' | 'Poster' | 'T-Shirt' | 'Mug'>('Canvas');
   const [simulatedSize, setSimulatedSize] = useState<string>('18" x 24"');
   const [isAddingToCart, setIsAddingToCart] = useState(false);
   const [cartAdded, setCartAdded] = useState(false);
 
+  useEffect(() => {
+    const loadCollectionDetail = async () => {
+      if (!collectionId) {
+        setLoading(false);
+        return;
+      }
+
+      try {
+        const [collectionItems, artworkItems] = await Promise.all([
+          getCollections(),
+          getArtworks({ collectionSlug: collectionId }),
+        ]);
+        setCollections(collectionItems);
+        setArtworks(artworkItems);
+      } catch (error) {
+        console.error('Failed to load collection detail:', error);
+        setCollections([]);
+        setArtworks([]);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    void loadCollectionDetail();
+  }, [collectionId]);
+
   // Find Category Metadata
   const categoryMeta = useMemo(() => {
-    return CATEGORIES.find(c => c.id === collectionId);
-  }, [collectionId]);
+    return collections.find((collection) => collection.slug === collectionId);
+  }, [collectionId, collections]);
 
   // Filter artworks under this category
   const categoryArtworks = useMemo(() => {
     if (!categoryMeta) return [];
-    return ARTWORKS.filter(art => art.category === categoryMeta.name);
-  }, [categoryMeta]);
+    return artworks;
+  }, [artworks, categoryMeta]);
 
   // Filter based on suitability
   const filteredArtworks = useMemo(() => {
     if (selectedFilter === 'All') return categoryArtworks;
     return categoryArtworks.filter(art => art.suitableProducts.includes(selectedFilter));
   }, [categoryArtworks, selectedFilter]);
+
+  const heroImageUrl = categoryArtworks[0]?.imageUrl || 'https://images.unsplash.com/photo-1620641788421-7a1c342ea42e?auto=format&fit=crop&q=80&w=1600';
+
+  if (loading) {
+    return (
+      <div className="max-w-7xl mx-auto px-6 py-32 text-center">
+        <p className="text-gray-500 uppercase tracking-widest text-sm">Loading collection</p>
+      </div>
+    );
+  }
 
   if (!categoryMeta) {
     return (
@@ -66,7 +106,7 @@ export function CollectionDetail() {
     );
   }
 
-  const triggerDownload = (art: typeof ARTWORKS[0]) => {
+  const triggerDownload = (art: Artwork) => {
     // Generate simulated download
     const link = document.createElement('a');
     link.href = art.wallpaperDownloadUrl;
@@ -90,7 +130,7 @@ export function CollectionDetail() {
       <section className="relative px-6 py-24 md:py-32 flex flex-col justify-center border-b border-white/5 overflow-hidden">
         <div className="absolute inset-0">
           <SmartImage
-            src={categoryMeta.imageUrl}
+            src={heroImageUrl}
             alt={categoryMeta.name}
             className="w-full h-full"
             imgClassName="w-full h-full object-cover opacity-20 filter blur-sm scale-105"
@@ -109,9 +149,6 @@ export function CollectionDetail() {
           </h1>
           <p className="text-gray-400 text-sm md:text-md max-w-2xl mx-auto mb-6 leading-relaxed uppercase tracking-wider">
             {categoryMeta.description}
-          </p>
-          <p className="text-neon-blue text-xs font-mono tracking-widest uppercase">
-            Best utilized for: {categoryMeta.bestFor}
           </p>
         </div>
       </section>

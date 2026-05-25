@@ -36,11 +36,13 @@ export function SmartImage({
 }: SmartImageProps) {
   const [isLoaded, setIsLoaded] = useState(false);
   const [hasError, setHasError] = useState(false);
+  const normalizedSrc = typeof src === 'string' ? src.trim() : src;
+  const hasRenderableSrc = typeof normalizedSrc === 'string' ? normalizedSrc.length > 0 : Boolean(normalizedSrc);
 
   useEffect(() => {
     setIsLoaded(false);
-    setHasError(false);
-  }, [src]);
+    setHasError(!hasRenderableSrc);
+  }, [hasRenderableSrc, src]);
 
   return (
     <div className={cn('relative overflow-hidden bg-cyber-black/40', className)}>
@@ -66,7 +68,7 @@ export function SmartImage({
       ) : null}
 
       <img
-        src={src}
+        src={normalizedSrc}
         alt={alt}
         className={cn(
           'transition-opacity duration-300',

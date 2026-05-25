@@ -1,4 +1,4 @@
-import type { Artwork, CropOverride, MockupRender, MockupTemplate, PlacementOverride, Product, VideoClip } from "../types.ts";
+import type { Artwork, CollectionSummary, CropOverride, MockupRender, MockupTemplate, PlacementOverride, Product, VideoClip } from "../types.ts";
 
 interface BackendCategory {
   id: number;
@@ -6,11 +6,19 @@ interface BackendCategory {
   slug: string;
 }
 
+interface BackendCollection {
+  id: number;
+  name: string;
+  slug: string;
+  description: string;
+}
+
 interface BackendArtwork {
   id: number;
   title: string;
   slug: string;
   category: BackendCategory;
+  collection: BackendCollection | null;
   description: string;
   image: string | null;
   thumbnail: string | null;
@@ -258,6 +266,8 @@ function mapArtwork(artwork: BackendArtwork): Artwork {
     backendArtworkId: artwork.id,
     title: artwork.title,
     category: artwork.category.name,
+    collectionName: artwork.collection?.name,
+    collectionSlug: artwork.collection?.slug,
     description: artwork.description,
     tags: [],
     suitableProducts: ['Wallpaper', 'Canvas', 'Poster', 'Digital Download'],
@@ -269,6 +279,15 @@ function mapArtwork(artwork: BackendArtwork): Artwork {
     isFeatured: artwork.is_featured,
     isPremium: artwork.is_featured,
     createdAt: artwork.created_at,
+  };
+}
+
+function mapCollection(collection: BackendCollection): CollectionSummary {
+  return {
+    id: String(collection.id),
+    name: collection.name,
+    slug: collection.slug,
+    description: collection.description,
   };
 }
 
@@ -356,8 +375,16 @@ export async function getGalleryCategories() {
   return ["All", ...categories.map((category) => category.name)];
 }
 
-export async function getArtworks() {
-  const artworks = await fetchJson<BackendArtwork[]>("/gallery/artworks/");
+export async function getCollections() {
+  const collections = await fetchJson<BackendCollection[]>("/gallery/collections/");
+  return collections.map(mapCollection);
+}
+
+export async function getArtworks(options?: { collectionSlug?: string }) {
+  const search = options?.collectionSlug
+    ? `?collection=${encodeURIComponent(options.collectionSlug)}`
+    : "";
+  const artworks = await fetchJson<BackendArtwork[]>(`/gallery/artworks/${search}`);
   return artworks.map(mapArtwork);
 }
 

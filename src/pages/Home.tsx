@@ -1,10 +1,13 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ChevronRight, Play, Image as ImageIcon, Sparkles, Zap, Globe, Cpu, ShoppingBag, WandSparkles } from 'lucide-react';
+import { ChevronRight, Play, Image as ImageIcon, Sparkles, Zap, Globe } from 'lucide-react';
 import { motion } from 'motion/react';
 import type { Artwork } from '../types.ts';
 import { SmartImage } from '../components/Common.tsx';
 import { getFeaturedArtworks } from '../lib/api.ts';
+
+const HERO_IMAGE_URL =
+  "https://images.unsplash.com/photo-1620641788421-7a1c342ea42e?auto=format&fit=crop&q=80&w=2400";
 
 export function Home() {
   const [featured, setFeatured] = useState<Artwork[]>([]);
@@ -12,106 +15,51 @@ export function Home() {
   const [featuredError, setFeaturedError] = useState<string | null>(null);
 
   useEffect(() => {
+    let isMounted = true;
+    const timeoutId = window.setTimeout(() => {
+      if (!isMounted) {
+        return;
+      }
+
+      setFeaturedError("Featured artworks are taking too long to load.");
+      setLoadingFeatured(false);
+    }, 8000);
+
     const loadFeaturedArtworks = async () => {
       try {
         const artworks = await getFeaturedArtworks();
+        if (!isMounted) {
+          return;
+        }
+
+        window.clearTimeout(timeoutId);
         setFeatured(artworks.slice(0, 4));
+        setFeaturedError(null);
       } catch (error) {
+        if (!isMounted) {
+          return;
+        }
+
+        window.clearTimeout(timeoutId);
         console.error("Failed to load featured artworks:", error);
         setFeaturedError("Featured artworks are temporarily unavailable.");
       } finally {
-        setLoadingFeatured(false);
+        if (isMounted) {
+          setLoadingFeatured(false);
+        }
       }
     };
 
     void loadFeaturedArtworks();
+
+    return () => {
+      isMounted = false;
+      window.clearTimeout(timeoutId);
+    };
   }, []);
 
   return (
     <div className="flex flex-col">
-      {/* Coming Soon */}
-      <section className="relative px-6 pt-32 pb-10 bg-cyber-black overflow-hidden">
-        <div className="absolute inset-0 pointer-events-none">
-          <div className="absolute -top-24 left-[8%] h-56 w-56 rounded-full bg-neon-purple/10 blur-3xl" />
-          <div className="absolute top-8 right-[12%] h-48 w-48 rounded-full bg-neon-blue/10 blur-3xl" />
-          <div className="absolute inset-x-0 bottom-0 h-24 bg-gradient-to-b from-transparent to-cyber-black" />
-        </div>
-
-        <div className="relative max-w-7xl mx-auto">
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.7 }}
-            className="glass-card border-white/10 rounded-[2rem] overflow-hidden"
-          >
-            <div className="grid grid-cols-1 lg:grid-cols-[1.3fr_0.9fr]">
-              <div className="p-8 md:p-10 lg:p-12 border-b lg:border-b-0 lg:border-r border-white/5">
-                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-neon-blue/10 border border-neon-blue/20 text-neon-blue text-[10px] uppercase tracking-[0.35em] font-bold mb-6">
-                  <Cpu size={12} />
-                  <span>Coming Soon</span>
-                </div>
-
-                <h2 className="text-4xl md:text-5xl font-display font-black text-white uppercase tracking-tight leading-none mb-5">
-                  The <span className="text-transparent bg-clip-text bg-gradient-to-r from-neon-blue via-white to-neon-purple">Official Launch</span> Is Near
-                </h2>
-
-                <p className="max-w-2xl text-sm md:text-base text-gray-400 leading-relaxed mb-8">
-                  Artverse is still in pre-launch mode. We are preparing the full public release with curated AI collections, immersive galleries, customization flows, and premium merch experiences built for the first official drop.
-                </p>
-
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                  <div className="rounded-2xl border border-white/5 bg-white/[0.03] p-4">
-                    <WandSparkles className="text-neon-purple mb-4" size={18} />
-                    <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-gray-500 mb-2">New Drop</p>
-                    <p className="text-sm text-white font-semibold uppercase tracking-wider">Launch Day Collections</p>
-                  </div>
-                  <div className="rounded-2xl border border-white/5 bg-white/[0.03] p-4">
-                    <ShoppingBag className="text-neon-blue mb-4" size={18} />
-                    <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-gray-500 mb-2">Storefront</p>
-                    <p className="text-sm text-white font-semibold uppercase tracking-wider">Official Merch Release</p>
-                  </div>
-                  <div className="rounded-2xl border border-white/5 bg-white/[0.03] p-4">
-                    <Sparkles className="text-neon-pink mb-4" size={18} />
-                    <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-gray-500 mb-2">Experience</p>
-                    <p className="text-sm text-white font-semibold uppercase tracking-wider">Full Site Reveal</p>
-                  </div>
-                </div>
-              </div>
-
-              <div className="p-8 md:p-10 lg:p-12 flex flex-col justify-between bg-gradient-to-br from-white/[0.03] to-transparent">
-                <div>
-                  <p className="text-[10px] font-bold uppercase tracking-[0.35em] text-gray-500 mb-4">Preview Transmission</p>
-                  <div className="space-y-4">
-                    <div className="rounded-2xl border border-neon-purple/20 bg-neon-purple/10 px-4 py-4">
-                      <p className="text-[10px] uppercase tracking-[0.35em] text-neon-purple font-bold mb-2">Phase 01</p>
-                      <p className="text-sm text-white uppercase tracking-wider">Private build period with ongoing visual and product refinement.</p>
-                    </div>
-                    <div className="rounded-2xl border border-neon-blue/20 bg-neon-blue/10 px-4 py-4">
-                      <p className="text-[10px] uppercase tracking-[0.35em] text-neon-blue font-bold mb-2">Phase 02</p>
-                      <p className="text-sm text-white uppercase tracking-wider">Public launch with galleries, generator access, and merch storefront activation.</p>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="mt-8 pt-6 border-t border-white/5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-                  <div>
-                    <p className="text-[10px] uppercase tracking-[0.35em] text-gray-500 font-bold mb-2">Status</p>
-                    <p className="text-sm text-white uppercase tracking-widest">Pre-launch transmission active</p>
-                  </div>
-                  <Link
-                    to="/about"
-                    className="inline-flex items-center justify-center gap-2 px-6 py-3 rounded-full bg-white text-cyber-black font-bold uppercase tracking-widest hover:bg-neon-blue hover:text-white transition-all"
-                  >
-                    Learn More
-                    <ChevronRight size={16} />
-                  </Link>
-                </div>
-              </div>
-            </div>
-          </motion.div>
-        </div>
-      </section>
-
       {/* Hero Section */}
       <section className="relative h-[90vh] flex items-center justify-center overflow-hidden px-6">
         <div className="absolute inset-0 z-0">
@@ -120,17 +68,10 @@ export function Home() {
             initial={{ scale: 1.1 }}
             animate={{ scale: 1 }}
             transition={{ duration: 10, repeat: Infinity, repeatType: "reverse" }}
-            className="w-full h-full"
-          >
-            <SmartImage
-              src="https://images.unsplash.com/photo-1620641788421-7a1c342ea42e?auto=format&fit=crop&q=80&w=2400"
-              alt="Artverse hero"
-              className="w-full h-full"
-              imgClassName="w-full h-full object-cover opacity-60"
-              loaderClassName="bg-cyber-black"
-              referrerPolicy="no-referrer"
-            />
-          </motion.div>
+            className="w-full h-full bg-cover bg-center opacity-60"
+            style={{ backgroundImage: `url(${HERO_IMAGE_URL})` }}
+            aria-hidden="true"
+          />
           <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,transparent_0%,rgba(0,0,0,0.8)_100%)] z-[5]" />
         </div>
 
@@ -145,7 +86,7 @@ export function Home() {
               <span>Next-Gen AI Art Brand</span>
             </div>
             
-            <h1 className="text-6xl md:text-8xl font-display font-black text-white tracking-tighter mb-8 leading-[0.9] uppercase overflow-hidden">
+            <h1 className="px-2 sm:px-4 text-6xl md:text-8xl font-display font-black text-white tracking-tighter mb-8 leading-[0.9] uppercase overflow-hidden">
                Where <span className="text-transparent bg-clip-text bg-gradient-to-r from-neon-purple via-neon-blue to-neon-pink">AI Meets</span> <br /> 
                Imagination
             </h1>
