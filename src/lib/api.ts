@@ -337,6 +337,17 @@ function mapMockupTemplate(template: BackendMockupTemplate): MockupTemplate {
 }
 
 function mapMockupRender(render: BackendMockupRender): MockupRender {
+  const rawPlacement = render.placement_override as
+    | (PlacementOverride & { corner_radius?: number; cornerRadius?: number })
+    | null
+    | undefined;
+  const placementOverride: PlacementOverride | null = render.placement_override
+    ? {
+        ...render.placement_override,
+        cornerRadius: Number(rawPlacement?.corner_radius ?? rawPlacement?.cornerRadius ?? 0),
+      }
+    : null;
+
   const cropOverride: CropOverride | null = render.crop_override
     ? {
         left: Number(render.crop_override.left ?? 0),
@@ -355,7 +366,7 @@ function mapMockupRender(render: BackendMockupRender): MockupRender {
     sourcePrompt: render.source_prompt,
     variantColor: render.variant_color,
     variantSize: render.variant_size,
-    placementOverride: render.placement_override || null,
+    placementOverride,
     cropOverride,
     status: render.status,
     cacheKey: render.cache_key,
@@ -441,6 +452,19 @@ export async function createMockupRender(input: {
   placementOverride?: PlacementOverride;
   cropOverride?: CropOverride;
 }) {
+  const placementOverride = input.placementOverride
+    ? {
+        x: input.placementOverride.x,
+        y: input.placementOverride.y,
+        width: input.placementOverride.width,
+        height: input.placementOverride.height,
+        corner_radius: input.placementOverride.cornerRadius,
+        fit: input.placementOverride.fit,
+        rotation: input.placementOverride.rotation,
+        opacity: input.placementOverride.opacity,
+      }
+    : undefined;
+
   const response = await sendJson<MockupRenderMutationResponse>("/generator/mockup-renders/", {
     method: "POST",
     headers: {
@@ -454,7 +478,7 @@ export async function createMockupRender(input: {
       template_id: input.templateId,
       variant_color: input.variantColor,
       variant_size: input.variantSize,
-      placement_override: input.placementOverride,
+      placement_override: placementOverride,
       crop_override: input.cropOverride
         ? {
             left: input.cropOverride.left,

@@ -73,6 +73,9 @@ export interface PlacementOverride {
   width: number;
   height: number;
   cornerRadius?: number;
+  fit?: 'contain' | 'cover' | string;
+  rotation?: number;
+  opacity?: number;
 }
 
 export interface CropOverride {

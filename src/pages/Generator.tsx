@@ -1,14 +1,22 @@
 import { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Sparkles, Download, Save, RefreshCw, Cpu, Zap, ShieldCheck } from 'lucide-react';
-import type { ActiveCustomization, Artwork, MockupRender, MockupTemplate, PlacementOverride } from '../types.ts';
+import type { ActiveCustomization, MockupRender, MockupTemplate, PlacementOverride } from '../types.ts';
 import { useAuth } from '../context/AuthContext.tsx';
 import { useCart } from '../context/CartContext.tsx';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase.ts';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 import { cn } from '../lib/utils.ts';
 import { ImageModal, SmartImage } from '../components/Common.tsx';
-import { createMockupRender, getArtworks, getMockupTemplates } from '../lib/api.ts';
+import { createMockupRender, getMockupTemplates } from '../lib/api.ts';
+
+const ASPECT_RATIO_OPTIONS = [
+  { value: '1:1', label: 'Square' },
+  { value: '4:3', label: 'Classic' },
+  { value: '3:4', label: 'Portrait' },
+  { value: '16:9', label: 'Cinematic' },
+  { value: '9:16', label: 'Story' },
+] as const;
 
 const TEMPLATE_META: Record<
   string,
@@ -116,6 +124,8 @@ export function Generator() {
   const { user } = useAuth();
   const { setActiveCustomization, addGeneratedArtwork, addToCart } = useCart();
   const [prompt, setPrompt] = useState('');
+  const [selectedAspectRatio, setSelectedAspectRatio] =
+    useState<(typeof ASPECT_RATIO_OPTIONS)[number]['value']>('1:1');
   const [isGenerating, setIsGenerating] = useState(false);
   const [generatedImage, setGeneratedImage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -128,9 +138,6 @@ export function Generator() {
   const [loadingMockups, setLoadingMockups] = useState(false);
   const [mockupError, setMockupError] = useState<string | null>(null);
   const [mockupRenders, setMockupRenders] = useState<Record<number, MockupRender>>({});
-  const [designLibrary, setDesignLibrary] = useState<Artwork[]>([]);
-  const [loadingLibrary, setLoadingLibrary] = useState(true);
-  const [libraryError, setLibraryError] = useState<string | null>(null);
   const [selectedDesign, setSelectedDesign] = useState<{
     id: string;
     sourceArtworkId?: number;
@@ -138,7 +145,7 @@ export function Generator() {
     title: string;
     description: string;
     createdAt: string;
-    source: 'generated' | 'library';
+    source: 'generated';
   } | null>(null);
   const geminiApiKey = import.meta.env.VITE_GEMINI_API_KEY;
 
@@ -159,22 +166,6 @@ export function Generator() {
   }, []);
 
   useEffect(() => {
-    const loadDesignLibrary = async () => {
-      try {
-        const artworks = await getArtworks();
-        setDesignLibrary(artworks.slice(0, 8));
-      } catch (loadError) {
-        console.error('Failed to load design library:', loadError);
-        setLibraryError('Backend design library is currently unavailable.');
-      } finally {
-        setLoadingLibrary(false);
-      }
-    };
-
-    void loadDesignLibrary();
-  }, []);
-
-  useEffect(() => {
     if (!selectedDesign || mockupTemplates.length === 0) {
       return;
     }
@@ -190,7 +181,6 @@ export function Generator() {
           const meta = getTemplateMeta(template);
           try {
             const response = await createMockupRender({
-              artworkId: selectedDesign.source === 'library' ? selectedDesign.sourceArtworkId : undefined,
               sourceImageUrl: selectedDesign.imageUrl,
               sourcePrompt: selectedDesign.title,
               templateId: template.id,
@@ -257,7 +247,7 @@ export function Generator() {
       userPrompt: selectedDesign.title,
       imageUrl: selectedDesign.imageUrl,
       createdAt: selectedDesign.createdAt,
-      categorySuggestion: selectedDesign.source === 'generated' ? 'Neural Synthetics' : 'Curated Library',
+      categorySuggestion: 'Neural Synthetics',
       availableProducts: mockupProducts.map((product) => ({
         templateId: product.templateId,
         productType: product.productType,
@@ -326,7 +316,7 @@ export function Generator() {
         },
         config: {
           imageConfig: {
-            aspectRatio: '1:1',
+            aspectRatio: selectedAspectRatio,
           },
         },
       });
@@ -394,6 +384,17 @@ export function Generator() {
     link.click();
   };
 
+  const previewAspectClass =
+    selectedAspectRatio === '16:9'
+      ? 'aspect-[16/9]'
+      : selectedAspectRatio === '9:16'
+        ? 'aspect-[9/16]'
+        : selectedAspectRatio === '4:3'
+          ? 'aspect-[4/3]'
+          : selectedAspectRatio === '3:4'
+            ? 'aspect-[3/4]'
+            : 'aspect-square';
+
   return (
     <div className="max-w-7xl mx-auto px-6 py-12">
       <header className="mb-16">
@@ -433,6 +434,29 @@ export function Generator() {
                 className="w-full bg-cyber-black/50 border border-white/10 rounded-xl p-4 text-white placeholder:text-gray-600 focus:outline-none focus:border-neon-purple min-h-[150px] resize-none transition-all"
               />
 
+              <div className="mt-6">
+                <label className="block text-[10px] font-bold text-neon-blue uppercase tracking-[0.3em] mb-3">
+                  Output Aspect Ratio
+                </label>
+                <div className="flex flex-wrap gap-2">
+                  {ASPECT_RATIO_OPTIONS.map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      onClick={() => setSelectedAspectRatio(option.value)}
+                      className={cn(
+                        'rounded-full border px-4 py-2 text-[10px] font-bold uppercase tracking-[0.24em] transition-all',
+                        selectedAspectRatio === option.value
+                          ? 'border-neon-purple bg-neon-purple text-white neon-glow-purple'
+                          : 'border-white/10 bg-white/5 text-gray-400 hover:border-white/25 hover:text-white'
+                      )}
+                    >
+                      {option.value} / {option.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               <div className="mt-6 flex flex-wrap gap-4">
                 <button
                   onClick={generateImage}
@@ -460,97 +484,12 @@ export function Generator() {
             </div>
           </div>
 
-          <div className="glass-card p-8 border-white/10 relative overflow-hidden">
-            <div className="relative z-10">
-              <div className="flex items-start justify-between gap-4 mb-6">
-                <div>
-                  <span className="inline-flex items-center gap-2 rounded-full border border-neon-blue/20 bg-neon-blue/10 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.3em] text-neon-blue mb-4">
-                    <ShieldCheck size={12} />
-                    Backend Design Chooser
-                  </span>
-                  <p className="text-[11px] text-gray-500 uppercase tracking-widest">
-                    Select an existing stored design instead of generating a new one.
-                  </p>
-                </div>
-                {loadingLibrary && (
-                  <span className="text-[10px] uppercase tracking-widest text-gray-500 shrink-0">Loading</span>
-                )}
-              </div>
-
-              {libraryError ? (
-                <div className="rounded-2xl border border-neon-pink/30 bg-neon-pink/10 px-4 py-3 text-sm text-neon-pink">
-                  {libraryError}
-                </div>
-              ) : (
-                <div className="-mx-2 overflow-x-auto pb-2">
-                  <div className="flex min-w-full gap-4 px-2 snap-x snap-mandatory">
-                    {designLibrary.map((art) => (
-                      <button
-                        key={art.id}
-                        type="button"
-                        onClick={() => {
-                          setSelectedDesign({
-                            id: `library-${art.id}`,
-                            sourceArtworkId: art.backendArtworkId,
-                            imageUrl: art.imageUrl,
-                            title: art.title,
-                            description: art.description,
-                            createdAt: art.createdAt,
-                            source: 'library',
-                          });
-                          setGeneratedImage(null);
-                          setMockupRenders({});
-                          setAddedProducts({});
-                          setSaveSuccess(false);
-                          setError(null);
-                        }}
-                        className={cn(
-                          'group relative w-56 shrink-0 snap-start overflow-hidden rounded-2xl border bg-cyber-black/40 text-left transition-all',
-                          selectedDesign?.id === `library-${art.id}`
-                            ? 'border-neon-blue neon-glow-blue'
-                            : 'border-white/10 hover:border-white/25'
-                        )}
-                      >
-                        <div className="aspect-[4/3] overflow-hidden">
-                          <SmartImage
-                            src={art.thumbnailUrl || art.imageUrl}
-                            alt={art.title}
-                            className="w-full h-full"
-                            imgClassName="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
-                            loading="lazy"
-                          />
-                        </div>
-                        <div className="p-3">
-                          <p className="text-[10px] font-bold uppercase tracking-widest text-white line-clamp-1">
-                            {art.title}
-                          </p>
-                          <p className="text-[9px] uppercase tracking-widest text-gray-500 mt-1 line-clamp-2">
-                            {art.category}
-                          </p>
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-
-          <div className="p-6 bg-cyber-black/40 border border-white/5 rounded-2xl flex items-start gap-4">
-            <ShieldCheck className="text-neon-blue mt-1 shrink-0" size={20} />
-            <div>
-              <p className="text-xs text-white font-bold uppercase tracking-wider mb-1">Safety Protocols Active</p>
-              <p className="text-xs text-gray-500 leading-relaxed uppercase">
-                The AI is configured to block explicit or harmful content. Ensure your prompts align with neural safety guidelines.
-              </p>
-            </div>
-          </div>
         </section>
 
         <section className="relative">
           <div
             className={cn(
-              'aspect-square rounded-3xl overflow-hidden glass-card border-white/10 flex items-center justify-center bg-cyber-black relative transition-all duration-700',
+              `${previewAspectClass} rounded-3xl overflow-hidden glass-card border-white/10 flex items-center justify-center bg-cyber-black relative transition-all duration-700`,
               generatedImage ? 'neon-glow-purple border-neon-purple/30 shadow-2xl' : 'border-dashed border-white/20'
             )}
           >
@@ -615,34 +554,6 @@ export function Generator() {
                     </p>
                   </div>
                 </motion.div>
-              ) : selectedDesign ? (
-                <motion.div
-                  key="selected-library-image"
-                  initial={{ opacity: 0, scale: 0.9 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  className="w-full h-full relative group"
-                >
-                  <SmartImage
-                    src={selectedDesign.imageUrl}
-                    alt={selectedDesign.title}
-                    className="w-full h-full"
-                    imgClassName="w-full h-full object-cover cursor-pointer"
-                    onClick={() => setIsModalOpen(true)}
-                    loading="lazy"
-                  />
-
-                  <div className="absolute inset-0 bg-cyber-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center gap-4">
-                    <button
-                      onClick={downloadImage}
-                      className="w-14 h-14 bg-white text-cyber-black rounded-full flex items-center justify-center hover:bg-neon-blue hover:text-white transition-all transform hover:scale-110"
-                    >
-                      <Download size={24} />
-                    </button>
-                    <p className="text-[10px] text-white font-bold uppercase tracking-widest text-center px-6">
-                      Using existing backend design
-                    </p>
-                  </div>
-                </motion.div>
               ) : error ? (
                 <motion.div
                   key="error"
@@ -691,7 +602,7 @@ export function Generator() {
                 These previews are now generated by the backend mockup pipeline using your design and active merch templates.
               </p>
               <p className="text-[10px] text-gray-500 uppercase tracking-widest mt-2">
-                Source: {selectedDesign.source === 'generated' ? 'Dream Machine output' : 'Backend design library'}
+                Source: Dream Machine output
               </p>
             </div>
             <div className="bg-white/5 border border-white/5 rounded-xl px-4 py-2 text-[10px] uppercase font-mono tracking-widest text-gray-400">
@@ -812,6 +723,16 @@ export function Generator() {
           )}
         </motion.section>
       )}
+
+      <div className="mt-16 p-6 bg-cyber-black/40 border border-white/5 rounded-2xl flex items-start gap-4">
+        <ShieldCheck className="text-neon-blue mt-1 shrink-0" size={20} />
+        <div>
+          <p className="text-xs text-white font-bold uppercase tracking-wider mb-1">Safety Protocols Active</p>
+          <p className="text-xs text-gray-500 leading-relaxed uppercase">
+            The AI is configured to block explicit or harmful content. Ensure your prompts align with neural safety guidelines.
+          </p>
+        </div>
+      </div>
 
       <ImageModal
         isOpen={isModalOpen}

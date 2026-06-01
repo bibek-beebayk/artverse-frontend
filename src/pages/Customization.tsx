@@ -14,7 +14,6 @@ import {
   Sparkles,
   Info,
   Move,
-  Scaling,
   Crop
 } from 'lucide-react';
 import { cn } from '../lib/utils.ts';
@@ -24,6 +23,7 @@ import type { ActiveCustomization, CropOverride, PlacementOverride } from '../ty
 
 const MIN_CROP_SIZE = 12;
 const CROP_HANDLE_SIZE = 18;
+const MIN_PLACEMENT_SIZE = 80;
 type CropHandle =
   | 'move'
   | 'n'
@@ -34,6 +34,7 @@ type CropHandle =
   | 'nw'
   | 'se'
   | 'sw';
+type PlacementHandle = 'move' | 'se';
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max);
@@ -48,7 +49,11 @@ function normalizePlacement(placement: ActiveCustomization['basePlacement']): Pl
   const y = Number(placement.y);
   const width = Number(placement.width);
   const height = Number(placement.height);
-  const cornerRadius = Number(placement.cornerRadius ?? 0);
+  const cornerRadius = Number(
+    (placement as PlacementOverride & { corner_radius?: number }).corner_radius ??
+      placement.cornerRadius ??
+      0
+  );
 
   if ([x, y, width, height].some((value) => Number.isNaN(value))) {
     return null;
@@ -60,6 +65,15 @@ function normalizePlacement(placement: ActiveCustomization['basePlacement']): Pl
     width,
     height,
     cornerRadius: Number.isNaN(cornerRadius) ? 0 : cornerRadius,
+    fit: typeof placement.fit === 'string' ? placement.fit : undefined,
+    rotation:
+      typeof placement.rotation === 'number' && !Number.isNaN(placement.rotation)
+        ? placement.rotation
+        : undefined,
+    opacity:
+      typeof placement.opacity === 'number' && !Number.isNaN(placement.opacity)
+        ? placement.opacity
+        : undefined,
   };
 }
 
@@ -88,11 +102,16 @@ export function Customization() {
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
   const [previewRenderId, setPreviewRenderId] = useState<number | undefined>(undefined);
   const [previewLoading, setPreviewLoading] = useState(false);
+  const [isPreviewAssetLoading, setIsPreviewAssetLoading] = useState(true);
   const [previewError, setPreviewError] = useState<string | null>(null);
-  const [offsetX, setOffsetX] = useState(0);
-  const [offsetY, setOffsetY] = useState(0);
-  const [scalePercent, setScalePercent] = useState(100);
+  const [placementDraft, setPlacementDraft] = useState<{
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  } | null>(null);
   const [cornerRadius, setCornerRadius] = useState(12);
+  const [isPlacementDragging, setIsPlacementDragging] = useState(false);
   const [isCropStudioOpen, setIsCropStudioOpen] = useState(false);
   const [isCropDragging, setIsCropDragging] = useState(false);
   const [appliedCropOverride, setAppliedCropOverride] = useState<CropOverride | null>(null);
@@ -104,7 +123,24 @@ export function Customization() {
   });
   const [cropStudioImageDimensions, setCropStudioImageDimensions] = useState<{ width: number; height: number } | null>(null);
   const [templateDimensions, setTemplateDimensions] = useState<{ width: number; height: number } | null>(null);
+  const previewStageRef = useRef<HTMLDivElement | null>(null);
   const cropStageRef = useRef<HTMLDivElement | null>(null);
+  const draftCropRectRef = useRef<CropOverride>({
+    left: 0,
+    top: 0,
+    width: 100,
+    height: 100,
+  });
+  const cropAnimationFrameRef = useRef<number | null>(null);
+  const placementDragState = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+    handle: PlacementHandle;
+    originPlacement: { x: number; y: number; width: number; height: number };
+    width: number;
+    height: number;
+  } | null>(null);
   const cropDragState = useRef<{
     pointerId: number;
     startX: number;
@@ -121,17 +157,37 @@ export function Customization() {
     }
   }, [activeCustomization, routeCustomization, setActiveCustomization]);
 
+  useEffect(() => {
+    draftCropRectRef.current = draftCropRect;
+  }, [draftCropRect]);
+
+  useEffect(() => {
+    return () => {
+      if (cropAnimationFrameRef.current !== null) {
+        window.cancelAnimationFrame(cropAnimationFrameRef.current);
+      }
+    };
+  }, []);
+
   // Initialize selected defaults from active customization
   useEffect(() => {
     if (customization) {
       setPreviewRenderId(undefined);
       setPreviewLoading(false);
+      setIsPreviewAssetLoading(true);
       setPreviewError(null);
       setTemplateDimensions(null);
       setCropStudioImageDimensions(null);
-      setOffsetX(0);
-      setOffsetY(0);
-      setScalePercent(100);
+      setPlacementDraft(
+        customization.basePlacement
+          ? {
+              x: customization.basePlacement.x,
+              y: customization.basePlacement.y,
+              width: customization.basePlacement.width,
+              height: customization.basePlacement.height,
+            }
+          : null
+      );
       setCornerRadius(customization.basePlacement?.cornerRadius ?? 12);
       setIsCropStudioOpen(false);
       setAppliedCropOverride(null);
@@ -150,14 +206,24 @@ export function Customization() {
       return null;
     }
 
-    return {
-      x: Math.round(customization.basePlacement.x + offsetX),
-      y: Math.round(customization.basePlacement.y + offsetY),
-      width: Math.max(80, Math.round(customization.basePlacement.width * (scalePercent / 100))),
-      height: Math.max(80, Math.round(customization.basePlacement.height * (scalePercent / 100))),
-      cornerRadius: Math.max(0, Math.round(cornerRadius)),
+    const activePlacement = placementDraft ?? {
+      x: customization.basePlacement.x,
+      y: customization.basePlacement.y,
+      width: customization.basePlacement.width,
+      height: customization.basePlacement.height,
     };
-  }, [cornerRadius, customization, offsetX, offsetY, scalePercent]);
+
+    return {
+      x: Math.round(activePlacement.x),
+      y: Math.round(activePlacement.y),
+      width: Math.max(MIN_PLACEMENT_SIZE, Math.round(activePlacement.width)),
+      height: Math.max(MIN_PLACEMENT_SIZE, Math.round(activePlacement.height)),
+      cornerRadius: Math.max(0, Math.round(cornerRadius)),
+      fit: customization.basePlacement.fit,
+      rotation: customization.basePlacement.rotation,
+      opacity: customization.basePlacement.opacity,
+    };
+  }, [cornerRadius, customization, placementDraft]);
 
   const previewPlacementStyle = useMemo(() => {
     if (!previewResolvedPlacement || !templateDimensions) {
@@ -245,7 +311,96 @@ export function Customization() {
     return '1 / 1';
   }, [cropStudioImageDimensions]);
 
+  const handlePlacementPointerDown = (
+    event: React.PointerEvent<HTMLElement>,
+    handle: PlacementHandle
+  ) => {
+    if (!previewResolvedPlacement || !previewStageRef.current) {
+      return;
+    }
+
+    const rect = previewStageRef.current.getBoundingClientRect();
+    placementDragState.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      handle,
+      originPlacement: {
+        x: previewResolvedPlacement.x,
+        y: previewResolvedPlacement.y,
+        width: previewResolvedPlacement.width,
+        height: previewResolvedPlacement.height,
+      },
+      width: rect.width || 1,
+      height: rect.height || 1,
+    };
+    setIsPlacementDragging(true);
+    previewStageRef.current.setPointerCapture(event.pointerId);
+  };
+
+  const handlePlacementPointerMove = (event: React.PointerEvent<HTMLElement>) => {
+    const activeDrag = placementDragState.current;
+    if (
+      !activeDrag ||
+      activeDrag.pointerId !== event.pointerId ||
+      !templateDimensions
+    ) {
+      return;
+    }
+
+    const deltaX = ((event.clientX - activeDrag.startX) / activeDrag.width) * templateDimensions.width;
+    const deltaY = ((event.clientY - activeDrag.startY) / activeDrag.height) * templateDimensions.height;
+
+    if (activeDrag.handle === 'move') {
+      setPlacementDraft({
+        x: clamp(
+          Math.round(activeDrag.originPlacement.x + deltaX),
+          0,
+          templateDimensions.width - activeDrag.originPlacement.width
+        ),
+        y: clamp(
+          Math.round(activeDrag.originPlacement.y + deltaY),
+          0,
+          templateDimensions.height - activeDrag.originPlacement.height
+        ),
+        width: activeDrag.originPlacement.width,
+        height: activeDrag.originPlacement.height,
+      });
+      return;
+    }
+
+    const nextWidth = clamp(
+      Math.round(activeDrag.originPlacement.width + deltaX),
+      MIN_PLACEMENT_SIZE,
+      templateDimensions.width - activeDrag.originPlacement.x
+    );
+    const nextHeight = clamp(
+      Math.round(activeDrag.originPlacement.height + deltaY),
+      MIN_PLACEMENT_SIZE,
+      templateDimensions.height - activeDrag.originPlacement.y
+    );
+
+    setPlacementDraft({
+      x: activeDrag.originPlacement.x,
+      y: activeDrag.originPlacement.y,
+      width: nextWidth,
+      height: nextHeight,
+    });
+  };
+
+  const handlePlacementPointerEnd = (event: React.PointerEvent<HTMLElement>) => {
+    const activeDrag = placementDragState.current;
+    if (activeDrag && activeDrag.pointerId === event.pointerId) {
+      placementDragState.current = null;
+      setIsPlacementDragging(false);
+      if (previewStageRef.current?.hasPointerCapture(event.pointerId)) {
+        previewStageRef.current.releasePointerCapture(event.pointerId);
+      }
+    }
+  };
+
   const handleCropPointerDown = (event: React.PointerEvent<HTMLElement>, handle: CropHandle) => {
+    event.preventDefault();
     const rect = cropStageRef.current?.getBoundingClientRect();
     if (!rect) {
       return;
@@ -263,11 +418,24 @@ export function Customization() {
     cropStageRef.current?.setPointerCapture(event.pointerId);
   };
 
+  const queueCropRectUpdate = (nextRect: CropOverride) => {
+    draftCropRectRef.current = nextRect;
+    if (cropAnimationFrameRef.current !== null) {
+      return;
+    }
+
+    cropAnimationFrameRef.current = window.requestAnimationFrame(() => {
+      cropAnimationFrameRef.current = null;
+      setDraftCropRect(draftCropRectRef.current);
+    });
+  };
+
   const handleCropPointerMove = (event: React.PointerEvent<HTMLElement>) => {
     const activeDrag = cropDragState.current;
     if (!activeDrag || activeDrag.pointerId !== event.pointerId) {
       return;
     }
+    event.preventDefault();
 
     const deltaX = ((event.clientX - activeDrag.startX) / activeDrag.width) * 100;
     const deltaY = ((event.clientY - activeDrag.startY) / activeDrag.height) * 100;
@@ -300,7 +468,7 @@ export function Customization() {
       nextHeight = clamp(nextHeight, MIN_CROP_SIZE, 100 - nextTop);
     }
 
-    setDraftCropRect({
+    queueCropRectUpdate({
       left: nextLeft,
       top: nextTop,
       width: nextWidth,
@@ -316,6 +484,11 @@ export function Customization() {
       if (cropStageRef.current?.hasPointerCapture(event.pointerId)) {
         cropStageRef.current.releasePointerCapture(event.pointerId);
       }
+      if (cropAnimationFrameRef.current !== null) {
+        window.cancelAnimationFrame(cropAnimationFrameRef.current);
+        cropAnimationFrameRef.current = null;
+      }
+      setDraftCropRect(draftCropRectRef.current);
     }
   };
 
@@ -335,6 +508,7 @@ export function Customization() {
   const totalPrice = (customization.basePrice * quantity).toFixed(2);
   const previewTemplateUrl = customization.templateBaseImageUrl || customization.mockupImageUrl;
   const supportsLiveTemplatePreview = Boolean(previewTemplateUrl && previewResolvedPlacement);
+  const showPreviewLoading = previewLoading || isPreviewAssetLoading;
 
   const handleConfirmAddToCart = async () => {
     setIsAdding(true);
@@ -408,11 +582,11 @@ export function Customization() {
       </div>
 
       {/* Main product configuration container */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-8 sm:py-12 grid grid-cols-1 lg:grid-cols-2 gap-8 lg:gap-16 items-start">
+      <div className="max-w-[1600px] mx-auto px-4 sm:px-6 py-8 sm:py-12 grid grid-cols-1 xl:grid-cols-[minmax(0,1.35fr)_minmax(420px,0.85fr)] gap-8 xl:gap-14 items-start">
         
         {/* Dynamic Display Mockup Box */}
         <section className="space-y-4 lg:space-y-6">
-          <div className="sticky top-24 z-20 space-y-3 lg:static lg:space-y-6">
+          <div className="sticky top-24 z-20 space-y-3 xl:static xl:space-y-6">
           <div className="rounded-2xl border border-neon-blue/15 bg-neon-blue/5 px-4 py-3 sm:hidden">
             <p className="text-[9px] font-bold uppercase tracking-[0.3em] text-neon-blue">Live Preview</p>
             <p className="mt-1 text-[10px] uppercase tracking-widest text-gray-400">
@@ -420,7 +594,7 @@ export function Customization() {
             </p>
           </div>
 
-          <div className="relative aspect-[4/3] sm:aspect-square rounded-3xl bg-cyber-gray/30 border border-white/5 flex items-center justify-center overflow-hidden p-4 sm:p-8 lg:p-12 group shadow-[0_0_50px_rgba(0,0,0,0.8)]">
+          <div className="relative min-h-[420px] sm:min-h-[560px] xl:min-h-[760px] rounded-3xl bg-cyber-gray/30 border border-white/5 flex items-center justify-center overflow-hidden p-3 sm:p-6 xl:p-8 group shadow-[0_0_50px_rgba(0,0,0,0.8)]">
             <div className="absolute inset-0 bg-gradient-to-tr from-cyber-black/80 to-white/5 pointer-events-none" />
             
             {/* Dynamic Product Renderings with user image nested */}
@@ -459,21 +633,27 @@ export function Customization() {
               <div className="relative w-full h-full flex items-center justify-center">
                 {supportsLiveTemplatePreview ? (
                   <div
+                    ref={previewStageRef}
                     className={cn(
-                      "relative h-full max-h-full w-auto max-w-full selection-none transition-all duration-300",
-                      previewLoading && "opacity-60 scale-[0.99]"
+                      "relative h-full max-h-full w-full max-w-full selection-none transition-all duration-300",
+                      showPreviewLoading && "opacity-60 scale-[0.99]",
+                      isPlacementDragging ? "cursor-grabbing" : "cursor-default"
                     )}
                     style={{
                       aspectRatio: templateDimensions
                         ? `${templateDimensions.width}/${templateDimensions.height}`
-                        : undefined,
+                        : '1 / 1',
                     }}
+                    onPointerMove={handlePlacementPointerMove}
+                    onPointerUp={handlePlacementPointerEnd}
+                    onPointerCancel={handlePlacementPointerEnd}
                   >
                     <img
                       src={previewTemplateUrl}
                       alt={customization.templateName || customization.productType}
                       className="absolute inset-0 w-full h-full object-contain pointer-events-none"
                       onLoad={(event) => {
+                        setIsPreviewAssetLoading(false);
                         const { naturalWidth, naturalHeight } = event.currentTarget;
                         if (naturalWidth > 0 && naturalHeight > 0) {
                           setTemplateDimensions((current) => {
@@ -488,15 +668,27 @@ export function Customization() {
                           });
                         }
                       }}
+                      onError={() => {
+                        setIsPreviewAssetLoading(false);
+                      }}
                     />
 
                     {previewPlacementStyle && (
                       <div
-                        className="absolute overflow-hidden flex items-center justify-center"
+                        className={cn(
+                          "absolute overflow-hidden flex items-center justify-center",
+                          isPlacementDragging ? "cursor-grabbing" : "cursor-grab"
+                        )}
                         style={{
                           ...previewPlacementStyle,
                           opacity: 0.96,
                           borderRadius: `${previewResolvedPlacement.cornerRadius ?? 0}px`,
+                          touchAction: 'none',
+                        }}
+                        onPointerDown={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          handlePlacementPointerDown(event, 'move');
                         }}
                       >
                         {hasAppliedCrop && previewCropFrameStyle ? (
@@ -518,6 +710,22 @@ export function Customization() {
                             className="absolute inset-0 w-full h-full object-contain pointer-events-none"
                           />
                         )}
+
+                        <div className="pointer-events-none absolute inset-0 rounded-[inherit] border-2 border-neon-blue/80 shadow-[0_0_0_1px_rgba(255,255,255,0.65)_inset]" />
+                        <div className="pointer-events-none absolute left-2 top-2 rounded-full bg-cyber-black/75 px-2 py-1 text-[8px] font-black uppercase tracking-[0.25em] text-neon-blue">
+                          Drag To Move
+                        </div>
+                        <button
+                          type="button"
+                          className="absolute bottom-0 right-0 h-5 w-5 translate-x-1/2 translate-y-1/2 rounded-full border-2 border-white bg-neon-pink shadow-[0_0_0_4px_rgba(0,0,0,0.35)] cursor-nwse-resize"
+                          style={{ touchAction: 'none' }}
+                          onPointerDown={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            handlePlacementPointerDown(event, 'se');
+                          }}
+                          aria-label="Resize design"
+                        />
                       </div>
                     )}
 
@@ -545,14 +753,16 @@ export function Customization() {
                     alt={customization.productType} 
                     className={cn(
                       "w-full h-full object-contain selection-none pointer-events-none transition-all duration-500",
-                      previewLoading && "opacity-30 scale-[0.985]"
+                      showPreviewLoading && "opacity-30 scale-[0.985]"
                     )}
+                    onLoad={() => setIsPreviewAssetLoading(false)}
+                    onError={() => setIsPreviewAssetLoading(false)}
                   />
                 )}
               </div>
             )}
 
-            {previewLoading && (
+            {showPreviewLoading && (
               <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-4 bg-cyber-black/58 backdrop-blur-[2px]">
                 <div className="relative h-16 w-16">
                   <div className="absolute inset-0 rounded-full border-2 border-neon-blue/30" />
@@ -561,10 +771,12 @@ export function Customization() {
                 </div>
                 <div className="text-center">
                   <p className="text-[10px] font-bold uppercase tracking-[0.35em] text-white">
-                    Finalizing Mockup
+                    {previewLoading ? 'Finalizing Mockup' : 'Loading Preview'}
                   </p>
                   <p className="mt-2 text-[9px] uppercase tracking-widest text-gray-400">
-                    Saving your chosen placement to the backend
+                    {previewLoading
+                      ? 'Saving your chosen placement to the backend'
+                      : 'Preparing the mockup workspace'}
                   </p>
                 </div>
               </div>
@@ -584,7 +796,11 @@ export function Customization() {
             <div className="absolute bottom-4 left-4 sm:bottom-6 sm:left-6 bg-cyber-black/80 border border-white/5 rounded-lg px-2.5 sm:px-3 py-1.5 flex items-center gap-2 max-w-[70%]">
               <Layers size={14} className="text-neon-blue animate-pulse" />
               <span className="text-[8px] sm:text-[9px] font-mono tracking-widest text-[#9ca3af] uppercase leading-tight">
-                {previewLoading ? 'Finalizing backend render' : 'Live preview mode active'}
+                {previewLoading
+                  ? 'Finalizing backend render'
+                  : isPreviewAssetLoading
+                    ? 'Loading preview assets'
+                    : 'Live preview mode active'}
               </span>
             </div>
           </div>
@@ -601,15 +817,22 @@ export function Customization() {
                 <div>
                   <p className="text-[9px] font-bold uppercase tracking-[0.3em] text-neon-blue">Live Adjustment Deck</p>
                   <p className="mt-1 text-[10px] uppercase tracking-widest text-gray-500">
-                    Move and resize the design while this preview stays visible.
+                    Drag the print box on the preview to move it. Pull the pink handle to resize it.
                   </p>
                 </div>
                 <button
                   type="button"
                   onClick={() => {
-                    setOffsetX(0);
-                    setOffsetY(0);
-                    setScalePercent(100);
+                    setPlacementDraft(
+                      customization.basePlacement
+                        ? {
+                            x: customization.basePlacement.x,
+                            y: customization.basePlacement.y,
+                            width: customization.basePlacement.width,
+                            height: customization.basePlacement.height,
+                          }
+                        : null
+                    );
                     setCornerRadius(customization.basePlacement?.cornerRadius ?? 12);
                     setAppliedCropOverride(null);
                     setDraftCropRect({ left: 0, top: 0, width: 100, height: 100 });
@@ -621,61 +844,18 @@ export function Customization() {
               </div>
 
               <div className="space-y-4">
-                <div>
-                  <div className="mb-2 flex items-center justify-between text-[9px] uppercase tracking-widest text-gray-500">
-                    <span className="inline-flex items-center gap-2">
-                      <Move size={12} />
-                      Horizontal
-                    </span>
-                    <span>{offsetX > 0 ? `+${offsetX}` : offsetX}px</span>
+                <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                  <div className="flex items-start gap-3">
+                    <Move size={14} className="mt-0.5 text-neon-blue" />
+                    <div>
+                      <p className="text-[9px] font-extrabold uppercase tracking-[0.28em] text-white">
+                        Direct Placement Mode
+                      </p>
+                      <p className="mt-2 text-[10px] uppercase tracking-widest text-gray-500">
+                        Move and resize the design right on the preview instead of using sliders.
+                      </p>
+                    </div>
                   </div>
-                  <input
-                    type="range"
-                    min={-520}
-                    max={520}
-                    step={10}
-                    value={offsetX}
-                    onChange={(event) => setOffsetX(Number(event.target.value))}
-                    className="w-full accent-[var(--color-neon-blue)]"
-                  />
-                </div>
-
-                <div>
-                  <div className="mb-2 flex items-center justify-between text-[9px] uppercase tracking-widest text-gray-500">
-                    <span className="inline-flex items-center gap-2">
-                      <Move size={12} />
-                      Vertical
-                    </span>
-                    <span>{offsetY > 0 ? `+${offsetY}` : offsetY}px</span>
-                  </div>
-                  <input
-                    type="range"
-                    min={-620}
-                    max={620}
-                    step={10}
-                    value={offsetY}
-                    onChange={(event) => setOffsetY(Number(event.target.value))}
-                    className="w-full accent-[var(--color-neon-purple)]"
-                  />
-                </div>
-
-                <div>
-                  <div className="mb-2 flex items-center justify-between text-[9px] uppercase tracking-widest text-gray-500">
-                    <span className="inline-flex items-center gap-2">
-                      <Scaling size={12} />
-                      Scale
-                    </span>
-                    <span>{scalePercent}%</span>
-                  </div>
-                  <input
-                    type="range"
-                    min={20}
-                    max={320}
-                    step={5}
-                    value={scalePercent}
-                    onChange={(event) => setScalePercent(Number(event.target.value))}
-                    className="w-full accent-[var(--color-neon-pink)]"
-                  />
                 </div>
 
                 <div>
@@ -764,63 +944,14 @@ export function Customization() {
             <div className="space-y-6 sm:space-y-8 py-6 sm:py-8">
               {customization.basePlacement && (
                 <div className="hidden lg:block space-y-5 sm:space-y-6 border-b border-white/5 pb-6 sm:pb-8">
-                  <div>
+                  <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
                     <label className="flex items-center gap-2 text-[8px] font-bold text-gray-400 uppercase tracking-[0.3em] mb-3">
                       <Move size={12} />
-                      Design Position
+                      Direct Placement
                     </label>
-                    <div className="grid grid-cols-1 gap-4">
-                      <div>
-                        <div className="flex items-center justify-between text-[9px] uppercase tracking-widest text-gray-500 mb-2">
-                          <span>Horizontal</span>
-                          <span>{offsetX > 0 ? `+${offsetX}` : offsetX}px</span>
-                        </div>
-                        <input
-                          type="range"
-                          min={-520}
-                          max={520}
-                          step={10}
-                          value={offsetX}
-                          onChange={(event) => setOffsetX(Number(event.target.value))}
-                          className="w-full accent-[var(--color-neon-blue)]"
-                        />
-                      </div>
-                      <div>
-                        <div className="flex items-center justify-between text-[9px] uppercase tracking-widest text-gray-500 mb-2">
-                          <span>Vertical</span>
-                          <span>{offsetY > 0 ? `+${offsetY}` : offsetY}px</span>
-                        </div>
-                        <input
-                          type="range"
-                          min={-620}
-                          max={620}
-                          step={10}
-                          value={offsetY}
-                          onChange={(event) => setOffsetY(Number(event.target.value))}
-                          className="w-full accent-[var(--color-neon-purple)]"
-                        />
-                      </div>
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="flex items-center gap-2 text-[8px] font-bold text-gray-400 uppercase tracking-[0.3em] mb-3">
-                      <Scaling size={12} />
-                      Design Size
-                    </label>
-                    <div className="flex items-center justify-between text-[9px] uppercase tracking-widest text-gray-500 mb-2">
-                      <span>Scale</span>
-                      <span>{scalePercent}%</span>
-                    </div>
-                    <input
-                      type="range"
-                      min={20}
-                      max={320}
-                      step={5}
-                      value={scalePercent}
-                      onChange={(event) => setScalePercent(Number(event.target.value))}
-                      className="w-full accent-[var(--color-neon-pink)]"
-                    />
+                    <p className="text-[10px] uppercase tracking-widest text-gray-500 leading-relaxed">
+                      Drag the print box on the preview to reposition the design. Use the pink corner handle to resize it live.
+                    </p>
                   </div>
 
                   <div>
@@ -886,9 +1017,17 @@ export function Customization() {
                   <button
                     type="button"
                     onClick={() => {
-                      setOffsetX(0);
-                      setOffsetY(0);
-                      setScalePercent(100);
+                      setPlacementDraft(
+                        customization.basePlacement
+                          ? {
+                              x: customization.basePlacement.x,
+                              y: customization.basePlacement.y,
+                              width: customization.basePlacement.width,
+                              height: customization.basePlacement.height,
+                            }
+                          : null
+                      );
+                      setCornerRadius(customization.basePlacement?.cornerRadius ?? 12);
                       setAppliedCropOverride(null);
                       setDraftCropRect({ left: 0, top: 0, width: 100, height: 100 });
                     }}
@@ -1076,7 +1215,7 @@ export function Customization() {
                         "relative mx-auto w-full max-w-2xl overflow-hidden rounded-[1.5rem] border border-dashed border-neon-blue/35 bg-cyber-gray/20 select-none",
                         isCropDragging ? "cursor-grabbing" : "cursor-default"
                       )}
-                      style={{ aspectRatio: cropStudioAspectRatio }}
+                      style={{ aspectRatio: cropStudioAspectRatio, touchAction: 'none', overscrollBehavior: 'contain' }}
                       onPointerMove={handleCropPointerMove}
                       onPointerUp={handleCropPointerEnd}
                       onPointerCancel={handleCropPointerEnd}
@@ -1104,6 +1243,7 @@ export function Customization() {
                           top: `${draftCropRect.top}%`,
                           width: `${draftCropRect.width}%`,
                           height: `${draftCropRect.height}%`,
+                          touchAction: 'none',
                         }}
                         onPointerDown={(event) => {
                           event.stopPropagation();
@@ -1140,7 +1280,7 @@ export function Customization() {
                               "absolute rounded-full border-2 border-white bg-cyber-black shadow-[0_0_0_4px_rgba(0,0,0,0.35)]",
                               className
                             )}
-                            style={{ width: `${CROP_HANDLE_SIZE}px`, height: `${CROP_HANDLE_SIZE}px` }}
+                            style={{ width: `${CROP_HANDLE_SIZE}px`, height: `${CROP_HANDLE_SIZE}px`, touchAction: 'none' }}
                             onPointerDown={(event) => {
                               event.stopPropagation();
                               handleCropPointerDown(event, handle);

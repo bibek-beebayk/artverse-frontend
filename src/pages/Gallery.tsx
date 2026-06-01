@@ -267,10 +267,11 @@ export function Gallery({ initialTab = 'images' }: GalleryProps) {
   const [videosLoading, setVideosLoading] = useState(true);
   const [imagesError, setImagesError] = useState<string | null>(null);
   const [videosError, setVideosError] = useState<string | null>(null);
-  const [currentImagePage, setCurrentImagePage] = useState(1);
   const [currentVideoPage, setCurrentVideoPage] = useState(1);
+  const [visibleImageCount, setVisibleImageCount] = useState(IMAGE_ITEMS_PER_PAGE);
   const [selectedArt, setSelectedArt] = useState<Artwork | null>(null);
   const [shareArt, setShareArt] = useState<Artwork | null>(null);
+  const imageLoadTriggerRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     const nextTab = normalizeTab(searchParams.get('tab'));
@@ -312,22 +313,52 @@ export function Gallery({ initialTab = 'images' }: GalleryProps) {
   }, []);
 
   useEffect(() => {
-    setCurrentImagePage(1);
+    setVisibleImageCount(IMAGE_ITEMS_PER_PAGE);
   }, [activeCategory]);
 
   const filteredArtworks =
     activeCategory === 'All' ? artworks : artworks.filter((art) => art.category === activeCategory);
-  const totalImagePages = Math.ceil(filteredArtworks.length / IMAGE_ITEMS_PER_PAGE);
-  const currentImageItems = filteredArtworks.slice(
-    (currentImagePage - 1) * IMAGE_ITEMS_PER_PAGE,
-    currentImagePage * IMAGE_ITEMS_PER_PAGE
-  );
+  const currentImageItems = filteredArtworks.slice(0, visibleImageCount);
+  const hasMoreImages = currentImageItems.length < filteredArtworks.length;
 
   const totalVideoPages = Math.ceil(videos.length / VIDEO_ITEMS_PER_PAGE);
   const currentVideoItems = videos.slice(
     (currentVideoPage - 1) * VIDEO_ITEMS_PER_PAGE,
     currentVideoPage * VIDEO_ITEMS_PER_PAGE
   );
+
+  useEffect(() => {
+    if (activeTab !== 'images' || !hasMoreImages || imagesLoading) {
+      return;
+    }
+
+    const target = imageLoadTriggerRef.current;
+    if (!target) {
+      return;
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const entry = entries[0];
+        if (!entry?.isIntersecting) {
+          return;
+        }
+
+        setVisibleImageCount((current) =>
+          Math.min(current + IMAGE_ITEMS_PER_PAGE, filteredArtworks.length)
+        );
+      },
+      {
+        rootMargin: '400px 0px',
+      }
+    );
+
+    observer.observe(target);
+
+    return () => {
+      observer.disconnect();
+    };
+  }, [activeTab, filteredArtworks.length, hasMoreImages, imagesLoading]);
 
   const handleTabChange = (tab: MediaTab) => {
     setActiveTab(tab);
@@ -482,15 +513,12 @@ export function Gallery({ initialTab = 'images' }: GalleryProps) {
               </>
             )}
 
-            {!imagesLoading && !imagesError && totalImagePages > 0 && (
-              <Pagination
-                currentPage={currentImagePage}
-                totalPages={totalImagePages}
-                onPageChange={(page) => {
-                  setCurrentImagePage(page);
-                  window.scrollTo({ top: 0, behavior: 'smooth' });
-                }}
-              />
+            {!imagesLoading && !imagesError && hasMoreImages && (
+              <div ref={imageLoadTriggerRef} className="mt-10 flex justify-center">
+                <div className="glass-card border-white/10 px-6 py-4 text-[10px] font-bold uppercase tracking-[0.35em] text-gray-500">
+                  Loading More Artworks
+                </div>
+              </div>
             )}
           </motion.section>
         ) : (
