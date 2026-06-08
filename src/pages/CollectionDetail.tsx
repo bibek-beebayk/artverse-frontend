@@ -570,6 +570,27 @@ export function CollectionDetail() {
         onClose={() => setSelectedArt(null)}
         imageUrl={selectedArt?.imageUrl || ''}
         title={selectedArt?.title || ''}
+        artworkId={selectedArt?.id || undefined}
+        onNext={
+          selectedArt && filteredArtworks.findIndex((a) => a.id === selectedArt.id) < filteredArtworks.length - 1
+            ? () => {
+                const index = filteredArtworks.findIndex((a) => a.id === selectedArt.id);
+                if (index !== -1 && index < filteredArtworks.length - 1) {
+                  setSelectedArt(filteredArtworks[index + 1]);
+                }
+              }
+            : undefined
+        }
+        onPrev={
+          selectedArt && filteredArtworks.findIndex((a) => a.id === selectedArt.id) > 0
+            ? () => {
+                const index = filteredArtworks.findIndex((a) => a.id === selectedArt.id);
+                if (index > 0) {
+                  setSelectedArt(filteredArtworks[index - 1]);
+                }
+              }
+            : undefined
+        }
       />
 
       <ShareModal 

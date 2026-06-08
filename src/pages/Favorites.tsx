@@ -153,6 +153,27 @@ export function Favorites() {
         onClose={() => setSelectedArt(null)}
         imageUrl={selectedArt?.artwork.imageUrl || ''}
         title={selectedArt?.artwork.title || ''}
+        artworkId={selectedArt?.artwork.id || undefined}
+        onNext={
+          selectedArt && favoritesItems.findIndex((a) => a.id === selectedArt.id) < favoritesItems.length - 1
+            ? () => {
+                const index = favoritesItems.findIndex((a) => a.id === selectedArt.id);
+                if (index !== -1 && index < favoritesItems.length - 1) {
+                  setSelectedArt(favoritesItems[index + 1]);
+                }
+              }
+            : undefined
+        }
+        onPrev={
+          selectedArt && favoritesItems.findIndex((a) => a.id === selectedArt.id) > 0
+            ? () => {
+                const index = favoritesItems.findIndex((a) => a.id === selectedArt.id);
+                if (index > 0) {
+                  setSelectedArt(favoritesItems[index - 1]);
+                }
+              }
+            : undefined
+        }
       />
     </div>
   );

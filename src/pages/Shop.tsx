@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { CheckCircle2, ChevronLeft, ChevronRight, Package2, Palette, RefreshCw, ShoppingBag, Sparkles } from 'lucide-react';
 import type { ActiveCustomization, Artwork, MockupRender, MockupTemplate, PlacementOverride } from '../types.ts';
 import { SmartImage } from '../components/Common.tsx';
@@ -235,6 +235,7 @@ function getSampleVariants(template: MockupTemplate): SampleVariant[] {
 
 export function Shop() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { addToCart, setActiveCustomization } = useCart();
   const templateRailRef = useRef<HTMLDivElement | null>(null);
   const designRailRef = useRef<HTMLDivElement | null>(null);
@@ -242,8 +243,12 @@ export function Shop() {
   const [designs, setDesigns] = useState<Artwork[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [selectedTemplateId, setSelectedTemplateId] = useState<number | null>(null);
-  const [selectedDesignId, setSelectedDesignId] = useState<string | null>(null);
+  const [selectedTemplateId, setSelectedTemplateId] = useState<number | null>(
+    (location.state as { selectedTemplateId?: number })?.selectedTemplateId || null
+  );
+  const [selectedDesignId, setSelectedDesignId] = useState<string | null>(
+    (location.state as { selectedDesignId?: string })?.selectedDesignId || null
+  );
   const [activeDesignCategory, setActiveDesignCategory] = useState('All');
   const [isGeneratingSamples, setIsGeneratingSamples] = useState(false);
   const [samplesError, setSamplesError] = useState<string | null>(null);

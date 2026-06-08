@@ -739,6 +739,7 @@ export function Generator() {
         onClose={() => setIsModalOpen(false)}
         imageUrl={selectedDesign?.imageUrl || generatedImage || ''}
         title={selectedDesign ? selectedDesign.title : `Neural Synthesis: ${prompt}`}
+        artworkId={selectedDesign?.id || undefined}
       />
     </div>
   );

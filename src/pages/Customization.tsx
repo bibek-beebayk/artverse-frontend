@@ -1528,6 +1528,7 @@ export function Customization() {
         onClose={() => setIsPreviewOpen(false)}
         imageUrl={customization.imageUrl}
         title={`Vision: ${customization.userPrompt}`}
+        artworkId={customization.artworkId || undefined}
       />
     </div>
   );

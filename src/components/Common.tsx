@@ -1,8 +1,11 @@
 import { ImgHTMLAttributes, ReactNode, useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, ChevronLeft, ChevronRight, Share2, Copy, Link as LinkIcon, Twitter, Facebook, ExternalLink, Check } from 'lucide-react';
+import { X, ChevronLeft, ChevronRight, Share2, Copy, Link as LinkIcon, Twitter, Facebook, ExternalLink, Check, Package2 } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { Navbar, Footer } from './Navigation.tsx';
 import { cn } from '../lib/utils.ts';
+import { getMockupTemplates } from '../lib/api.ts';
+import type { MockupTemplate } from '../types.ts';
 
 interface LayoutProps {
   children: ReactNode;
@@ -96,21 +99,47 @@ interface ModalProps {
   onClose: () => void;
   imageUrl: string;
   title: string;
+  onNext?: () => void;
+  onPrev?: () => void;
+  artworkId?: string;
 }
 
-export function ImageModal({ isOpen, onClose, imageUrl, title }: ModalProps) {
+export function ImageModal({ isOpen, onClose, imageUrl, title, onNext, onPrev, artworkId }: ModalProps) {
+  const navigate = useNavigate();
+  const [showPropSelector, setShowPropSelector] = useState(false);
+  const [templates, setTemplates] = useState<MockupTemplate[]>([]);
+  const [loadingProps, setLoadingProps] = useState(false);
+
+  useEffect(() => {
+    if (showPropSelector) {
+      setLoadingProps(true);
+      getMockupTemplates().then(setTemplates).finally(() => setLoadingProps(false));
+    }
+  }, [showPropSelector]);
+
   useEffect(() => {
     if (!isOpen) {
+      setShowPropSelector(false);
       return;
     }
 
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'ArrowRight' && onNext) {
+        onNext();
+      } else if (e.key === 'ArrowLeft' && onPrev) {
+        onPrev();
+      }
+    };
+
     const originalOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
+    window.addEventListener('keydown', handleKeyDown);
 
     return () => {
       document.body.style.overflow = originalOverflow;
+      window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [isOpen]);
+  }, [isOpen, onNext, onPrev]);
 
   return (
     <AnimatePresence>
@@ -149,22 +178,86 @@ export function ImageModal({ isOpen, onClose, imageUrl, title }: ModalProps) {
             </button>
             
             <div className="relative w-full h-full glass-card overflow-hidden flex items-center justify-center border-white/20">
-              <SmartImage
-                src={imageUrl}
-                alt={title}
-                className="w-full h-full bg-transparent"
-                imgClassName="max-w-full max-h-full object-contain mx-auto"
-                loaderClassName="bg-cyber-black"
-                referrerPolicy="no-referrer"
-                loading="lazy"
-              />
-              
-              <div className="absolute bottom-0 left-0 right-0 p-4 sm:p-8 pt-16 sm:pt-20 bg-gradient-to-t from-cyber-black to-transparent">
-                  <h3 className="text-lg sm:text-2xl font-display font-bold text-white tracking-widest uppercase mb-2 pr-14 sm:pr-0">
-                    {title}
-                  </h3>
-                  <div className="h-1 w-20 bg-neon-purple neon-glow-purple" />
-              </div>
+              {showPropSelector ? (
+                <div className="absolute inset-0 z-[110] bg-cyber-black/95 backdrop-blur-xl flex flex-col p-8 items-center overflow-y-auto">
+                  <button onClick={(e) => { e.stopPropagation(); setShowPropSelector(false); }} className="absolute top-4 right-4 text-white/50 hover:text-white bg-white/10 rounded-full p-2">
+                    <X size={24} />
+                  </button>
+                  <h3 className="text-2xl font-display font-bold uppercase tracking-widest text-white mb-8 mt-8">Select a Prop Template</h3>
+                  {loadingProps ? (
+                    <div className="text-neon-blue uppercase tracking-widest text-xs animate-pulse">Loading templates...</div>
+                  ) : (
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-6 max-w-4xl w-full">
+                      {templates.map(t => (
+                        <button 
+                          key={t.id} 
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onClose();
+                            navigate('/shop', { state: { selectedDesignId: artworkId, selectedTemplateId: t.id }});
+                          }}
+                          className="glass-card p-4 flex flex-col items-center hover:border-neon-blue transition-all group border border-white/10"
+                        >
+                          <img src={t.baseImage} className="w-24 h-24 object-contain mb-4 group-hover:scale-110 transition-transform" />
+                          <span className="text-[10px] uppercase tracking-widest font-bold text-white text-center">{t.productTypeDisplay}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <>
+                  {onPrev && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onPrev();
+                      }}
+                      className="absolute left-2 sm:left-4 z-[103] p-2 sm:p-3 rounded-full bg-cyber-black/50 hover:bg-cyber-black/80 text-white/50 hover:text-white backdrop-blur-md transition-all border border-white/10 flex items-center justify-center group"
+                    >
+                      <ChevronLeft className="w-6 h-6 sm:w-8 sm:h-8 group-hover:-translate-x-1 transition-transform" />
+                    </button>
+                  )}
+                  {onNext && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onNext();
+                      }}
+                      className="absolute right-2 sm:right-4 z-[103] p-2 sm:p-3 rounded-full bg-cyber-black/50 hover:bg-cyber-black/80 text-white/50 hover:text-white backdrop-blur-md transition-all border border-white/10 flex items-center justify-center group"
+                    >
+                      <ChevronRight className="w-6 h-6 sm:w-8 sm:h-8 group-hover:translate-x-1 transition-transform" />
+                    </button>
+                  )}
+                  <SmartImage
+                    src={imageUrl}
+                    alt={title}
+                    className="w-full h-full bg-transparent"
+                    imgClassName="max-w-full max-h-full object-contain mx-auto"
+                    loaderClassName="bg-cyber-black"
+                    referrerPolicy="no-referrer"
+                    loading="lazy"
+                  />
+                  
+                  <div className="absolute bottom-0 left-0 right-0 p-4 sm:p-8 pt-16 sm:pt-20 bg-gradient-to-t from-cyber-black to-transparent flex justify-between items-end pointer-events-none">
+                    <div className="pointer-events-auto">
+                        <h3 className="text-lg sm:text-2xl font-display font-bold text-white tracking-widest uppercase mb-2 pr-14 sm:pr-0">
+                          {title}
+                        </h3>
+                        <div className="h-1 w-20 bg-neon-purple neon-glow-purple" />
+                    </div>
+                    {artworkId && (
+                      <button 
+                        onClick={(e) => { e.stopPropagation(); setShowPropSelector(true); }}
+                        className="flex items-center gap-2 bg-neon-blue text-cyber-black px-4 py-2 sm:px-6 sm:py-3 rounded-xl font-black uppercase tracking-widest text-[10px] sm:text-xs hover:bg-white transition-colors pointer-events-auto shadow-[0_0_20px_rgba(0,195,255,0.3)]"
+                      >
+                        <Package2 size={16} />
+                        Use Design
+                      </button>
+                    )}
+                  </div>
+                </>
+              )}
             </div>
           </motion.div>
         </motion.div>
