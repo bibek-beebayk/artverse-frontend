@@ -104,13 +104,14 @@ export function Customization() {
   const [previewLoading, setPreviewLoading] = useState(false);
   const [isPreviewAssetLoading, setIsPreviewAssetLoading] = useState(true);
   const [previewError, setPreviewError] = useState<string | null>(null);
+  const [designDimensions, setDesignDimensions] = useState<{ width: number; height: number } | null>(null);
   const [placementDraft, setPlacementDraft] = useState<{
     x: number;
     y: number;
     width: number;
     height: number;
   } | null>(null);
-  const [cornerRadius, setCornerRadius] = useState(12);
+  const [cornerRadius, setCornerRadius] = useState(0);
   const [isPlacementDragging, setIsPlacementDragging] = useState(false);
   const [isCropStudioOpen, setIsCropStudioOpen] = useState(false);
   const [isCropDragging, setIsCropDragging] = useState(false);
@@ -176,19 +177,11 @@ export function Customization() {
       setPreviewLoading(false);
       setIsPreviewAssetLoading(true);
       setPreviewError(null);
+      setDesignDimensions(null);
       setTemplateDimensions(null);
       setCropStudioImageDimensions(null);
-      setPlacementDraft(
-        customization.basePlacement
-          ? {
-              x: customization.basePlacement.x,
-              y: customization.basePlacement.y,
-              width: customization.basePlacement.width,
-              height: customization.basePlacement.height,
-            }
-          : null
-      );
-      setCornerRadius(customization.basePlacement?.cornerRadius ?? 12);
+      setPlacementDraft(null);
+      setCornerRadius(0);
       setIsCropStudioOpen(false);
       setAppliedCropOverride(null);
       setDraftCropRect({ left: 0, top: 0, width: 100, height: 100 });
@@ -509,6 +502,134 @@ export function Customization() {
   const previewTemplateUrl = customization.templateBaseImageUrl || customization.mockupImageUrl;
   const supportsLiveTemplatePreview = Boolean(previewTemplateUrl && previewResolvedPlacement);
   const showPreviewLoading = previewLoading || isPreviewAssetLoading;
+
+  useEffect(() => {
+    if (!customization?.basePlacement || !designDimensions) {
+      return;
+    }
+
+    const basePlacement = customization.basePlacement;
+    const designAspectRatio = designDimensions.width / designDimensions.height;
+    const placementAspectRatio = basePlacement.width / basePlacement.height;
+
+    let nextWidth = basePlacement.width;
+    let nextHeight = basePlacement.height;
+
+    if (designAspectRatio >= placementAspectRatio) {
+      nextHeight = Math.max(
+        MIN_PLACEMENT_SIZE,
+        Math.round(basePlacement.width / Math.max(designAspectRatio, 0.01))
+      );
+    } else {
+      nextWidth = Math.max(
+        MIN_PLACEMENT_SIZE,
+        Math.round(basePlacement.height * designAspectRatio)
+      );
+    }
+
+    nextWidth = Math.min(nextWidth, basePlacement.width);
+    nextHeight = Math.min(nextHeight, basePlacement.height);
+
+    const centeredX = Math.round(basePlacement.x + (basePlacement.width - nextWidth) / 2);
+    const centeredY = Math.round(basePlacement.y + (basePlacement.height - nextHeight) / 2);
+
+    setPlacementDraft((current) => {
+      if (
+        current &&
+        current.x === centeredX &&
+        current.y === centeredY &&
+        current.width === nextWidth &&
+        current.height === nextHeight
+      ) {
+        return current;
+      }
+
+      return {
+        x: centeredX,
+        y: centeredY,
+        width: nextWidth,
+        height: nextHeight,
+      };
+    });
+  }, [customization, designDimensions]);
+
+  useEffect(() => {
+    if (!customization) {
+      setIsPreviewAssetLoading(false);
+      return;
+    }
+
+    const assetUrls = Array.from(
+      new Set(
+        [previewTemplateUrl, customization.imageUrl].filter(
+          (value): value is string => Boolean(value && value.trim())
+        )
+      )
+    );
+
+    if (assetUrls.length === 0) {
+      setIsPreviewAssetLoading(false);
+      return;
+    }
+
+    let isCancelled = false;
+    let remaining = assetUrls.length;
+    setIsPreviewAssetLoading(true);
+
+    const finish = () => {
+      remaining -= 1;
+      if (!isCancelled && remaining <= 0) {
+        setIsPreviewAssetLoading(false);
+      }
+    };
+
+    assetUrls.forEach((assetUrl) => {
+      const image = new window.Image();
+      image.onload = () => {
+        if (
+          !isCancelled &&
+          assetUrl === customization.imageUrl &&
+          image.naturalWidth > 0 &&
+          image.naturalHeight > 0
+        ) {
+          setDesignDimensions((current) => {
+            if (
+              current?.width === image.naturalWidth &&
+              current?.height === image.naturalHeight
+            ) {
+              return current;
+            }
+
+            return { width: image.naturalWidth, height: image.naturalHeight };
+          });
+        }
+        if (
+          !isCancelled &&
+          assetUrl === previewTemplateUrl &&
+          image.naturalWidth > 0 &&
+          image.naturalHeight > 0
+        ) {
+          setTemplateDimensions((current) => {
+            if (
+              current?.width === image.naturalWidth &&
+              current?.height === image.naturalHeight
+            ) {
+              return current;
+            }
+
+            return { width: image.naturalWidth, height: image.naturalHeight };
+          });
+        }
+        finish();
+      };
+      image.onerror = finish;
+      image.src = assetUrl;
+    });
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [customization, previewTemplateUrl]);
 
   const handleConfirmAddToCart = async () => {
     setIsAdding(true);
@@ -833,7 +954,7 @@ export function Customization() {
                           }
                         : null
                     );
-                    setCornerRadius(customization.basePlacement?.cornerRadius ?? 12);
+                    setCornerRadius(0);
                     setAppliedCropOverride(null);
                     setDraftCropRect({ left: 0, top: 0, width: 100, height: 100 });
                   }}
@@ -1027,7 +1148,7 @@ export function Customization() {
                             }
                           : null
                       );
-                      setCornerRadius(customization.basePlacement?.cornerRadius ?? 12);
+                      setCornerRadius(0);
                       setAppliedCropOverride(null);
                       setDraftCropRect({ left: 0, top: 0, width: 100, height: 100 });
                     }}

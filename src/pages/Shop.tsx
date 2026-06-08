@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { CheckCircle2, Package2, Palette, RefreshCw, ShoppingBag, Sparkles } from 'lucide-react';
+import { CheckCircle2, ChevronLeft, ChevronRight, Package2, Palette, RefreshCw, ShoppingBag, Sparkles } from 'lucide-react';
 import type { ActiveCustomization, Artwork, MockupRender, MockupTemplate, PlacementOverride } from '../types.ts';
 import { SmartImage } from '../components/Common.tsx';
 import { createMockupRender, getArtworks, getMockupTemplates } from '../lib/api.ts';
@@ -236,6 +236,7 @@ function getSampleVariants(template: MockupTemplate): SampleVariant[] {
 export function Shop() {
   const navigate = useNavigate();
   const { addToCart, setActiveCustomization } = useCart();
+  const templateRailRef = useRef<HTMLDivElement | null>(null);
   const designRailRef = useRef<HTMLDivElement | null>(null);
   const [templates, setTemplates] = useState<MockupTemplate[]>([]);
   const [designs, setDesigns] = useState<Artwork[]>([]);
@@ -391,6 +392,34 @@ export function Shop() {
     } else if (rail.scrollLeft >= singleSetWidth * 1.75) {
       rail.scrollLeft -= singleSetWidth;
     }
+  };
+
+  const handleHorizontalWheel = (
+    event: React.WheelEvent<HTMLDivElement>,
+    rail: HTMLDivElement | null
+  ) => {
+    if (!rail) {
+      return;
+    }
+
+    const nextDelta =
+      Math.abs(event.deltaY) > Math.abs(event.deltaX) ? event.deltaY : event.deltaX;
+
+    if (nextDelta === 0) {
+      return;
+    }
+
+    event.preventDefault();
+    rail.scrollBy({ left: nextDelta, behavior: 'auto' });
+  };
+
+  const scrollRailByPage = (rail: HTMLDivElement | null, direction: 'prev' | 'next') => {
+    if (!rail) {
+      return;
+    }
+
+    const delta = Math.max(rail.clientWidth * 0.8, 240) * (direction === 'next' ? 1 : -1);
+    rail.scrollBy({ left: delta, behavior: 'smooth' });
   };
 
   const handleAddSampleToCart = (sample: ShopSample) => {
@@ -550,43 +579,68 @@ export function Shop() {
           )}
         </div>
 
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
-          {templates.map((template) => (
-            <button
-              key={template.id}
-              type="button"
-              onClick={() => {
-                setSelectedTemplateId(template.id);
-                setSamples([]);
-                setSamplesError(null);
-                setAddedSampleKey(null);
-              }}
-              className={cn(
-                'overflow-hidden rounded-3xl border text-left transition-all',
-                selectedTemplateId === template.id
-                  ? 'border-neon-pink/40 bg-neon-pink/10'
-                  : 'border-white/10 bg-white/5 hover:border-white/25'
-              )}
-            >
-              <div className="aspect-square bg-cyber-black/60">
-                <SmartImage
-                  src={template.baseImage || ''}
-                  alt={template.productTypeDisplay}
-                  className="w-full h-full"
-                  imgClassName="w-full h-full object-contain p-5"
-                  loading="lazy"
-                />
-              </div>
-              <div className="p-4">
-                <p className="text-xs font-bold uppercase tracking-widest text-white">
-                  {template.productTypeDisplay}
-                </p>
-                <p className="mt-1 text-[10px] uppercase tracking-[0.25em] text-gray-500 line-clamp-2">
-                  {template.description || 'Backend mockup template'}
-                </p>
-              </div>
-            </button>
-          ))}
+        <div className="mb-4 flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={() => scrollRailByPage(templateRailRef.current, 'prev')}
+            className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/10 bg-white/5 text-gray-300 transition-all hover:border-white/20 hover:text-white"
+            aria-label="Previous props"
+          >
+            <ChevronLeft size={16} />
+          </button>
+          <button
+            type="button"
+            onClick={() => scrollRailByPage(templateRailRef.current, 'next')}
+            className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/10 bg-white/5 text-gray-300 transition-all hover:border-white/20 hover:text-white"
+            aria-label="Next props"
+          >
+            <ChevronRight size={16} />
+          </button>
+        </div>
+
+        <div
+          ref={templateRailRef}
+          onWheel={(event) => handleHorizontalWheel(event, templateRailRef.current)}
+          className="-mx-2 overflow-x-auto pb-3 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        >
+          <div className="flex w-max gap-4 sm:gap-6 px-2">
+            {templates.map((template) => (
+              <button
+                key={template.id}
+                type="button"
+                onClick={() => {
+                  setSelectedTemplateId(template.id);
+                  setSamples([]);
+                  setSamplesError(null);
+                  setAddedSampleKey(null);
+                }}
+                className={cn(
+                  'w-44 sm:w-52 lg:w-60 shrink-0 overflow-hidden rounded-3xl border text-left transition-all',
+                  selectedTemplateId === template.id
+                    ? 'border-neon-pink/40 bg-neon-pink/10'
+                    : 'border-white/10 bg-white/5 hover:border-white/25'
+                )}
+              >
+                <div className="aspect-square bg-cyber-black/60">
+                  <SmartImage
+                    src={template.baseImage || ''}
+                    alt={template.productTypeDisplay}
+                    className="w-full h-full"
+                    imgClassName="w-full h-full object-contain p-5"
+                    loading="lazy"
+                  />
+                </div>
+                <div className="p-4">
+                  <p className="text-xs font-bold uppercase tracking-widest text-white">
+                    {template.productTypeDisplay}
+                  </p>
+                  <p className="mt-1 text-[10px] uppercase tracking-[0.25em] text-gray-500 line-clamp-2">
+                    {template.description || 'Backend mockup template'}
+                  </p>
+                </div>
+              </button>
+            ))}
+          </div>
         </div>
       </section>
 
@@ -613,6 +667,25 @@ export function Shop() {
           </div>
         ) : (
           <div className="space-y-5">
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => scrollRailByPage(designRailRef.current, 'prev')}
+                className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/10 bg-white/5 text-gray-300 transition-all hover:border-white/20 hover:text-white"
+                aria-label="Previous designs"
+              >
+                <ChevronLeft size={16} />
+              </button>
+              <button
+                type="button"
+                onClick={() => scrollRailByPage(designRailRef.current, 'next')}
+                className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/10 bg-white/5 text-gray-300 transition-all hover:border-white/20 hover:text-white"
+                aria-label="Next designs"
+              >
+                <ChevronRight size={16} />
+              </button>
+            </div>
+
             <div className="-mx-2 overflow-x-auto pb-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
               <div className="flex w-max gap-3 px-2">
                 {designCategories.map((category) => (
@@ -648,6 +721,7 @@ export function Shop() {
             <div
               ref={designRailRef}
               onScroll={handleDesignRailScroll}
+              onWheel={(event) => handleHorizontalWheel(event, designRailRef.current)}
               className="-mx-2 overflow-x-auto pb-3 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
             >
               <div className="flex w-max gap-4 px-2">
