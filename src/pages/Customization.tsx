@@ -14,12 +14,13 @@ import {
   Sparkles,
   Info,
   Move,
-  Crop
+  Crop,
+  Type
 } from 'lucide-react';
 import { cn } from '../lib/utils.ts';
 import { ImageModal } from '../components/Common.tsx';
 import { createMockupRender } from '../lib/api.ts';
-import type { ActiveCustomization, CropOverride, PlacementOverride } from '../types.ts';
+import type { ActiveCustomization, CropOverride, PlacementOverride, TextElement } from '../types.ts';
 
 const MIN_CROP_SIZE = 12;
 const CROP_HANDLE_SIZE = 18;
@@ -152,6 +153,20 @@ export function Customization() {
     height: number;
   } | null>(null);
 
+  const [textElements, setTextElements] = useState<TextElement[]>([]);
+  const [activeTextId, setActiveTextId] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<'design' | 'text'>('design');
+  const textDragState = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+    id: string;
+    originX: number;
+    originY: number;
+    width: number;
+    height: number;
+  } | null>(null);
+
   useEffect(() => {
     if (!activeCustomization && routeCustomization) {
       setActiveCustomization(routeCustomization);
@@ -191,6 +206,9 @@ export function Customization() {
       if (customization.sizes && customization.sizes.length > 0) {
         setSelectedSize(customization.sizes[0]);
       }
+      setTextElements(customization.textElements || []);
+      setActiveTextId(null);
+      setActiveTab('design');
     }
   }, [customization]);
 
@@ -485,6 +503,63 @@ export function Customization() {
     }
   };
 
+  const handleTextPointerDown = (event: React.PointerEvent<HTMLElement>, textId: string) => {
+    event.preventDefault();
+    event.stopPropagation();
+    
+    if (!templateDimensions || !previewStageRef.current) return;
+    
+    const textEl = textElements.find(t => t.id === textId);
+    if (!textEl) return;
+    
+    setActiveTextId(textId);
+    
+    const rect = previewStageRef.current.getBoundingClientRect();
+    textDragState.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      id: textId,
+      originX: textEl.x,
+      originY: textEl.y,
+      width: rect.width || 1,
+      height: rect.height || 1,
+    };
+    
+    previewStageRef.current.setPointerCapture(event.pointerId);
+  };
+
+  const handleTextPointerMove = (event: React.PointerEvent<HTMLElement>) => {
+    const activeDrag = textDragState.current;
+    if (!activeDrag || activeDrag.pointerId !== event.pointerId || !templateDimensions) {
+      return;
+    }
+
+    const deltaX = ((event.clientX - activeDrag.startX) / activeDrag.width) * templateDimensions.width;
+    const deltaY = ((event.clientY - activeDrag.startY) / activeDrag.height) * templateDimensions.height;
+
+    setTextElements(prev => prev.map(t => {
+      if (t.id === activeDrag.id) {
+        return {
+          ...t,
+          x: activeDrag.originX + deltaX,
+          y: activeDrag.originY + deltaY,
+        };
+      }
+      return t;
+    }));
+  };
+
+  const handleTextPointerEnd = (event: React.PointerEvent<HTMLElement>) => {
+    const activeDrag = textDragState.current;
+    if (activeDrag && activeDrag.pointerId === event.pointerId) {
+      textDragState.current = null;
+      if (previewStageRef.current?.hasPointerCapture(event.pointerId)) {
+        previewStageRef.current.releasePointerCapture(event.pointerId);
+      }
+    }
+  };
+
   if (!customization) {
     return (
       <div className="max-w-7xl mx-auto px-6 py-32 text-center text-white">
@@ -649,6 +724,7 @@ export function Customization() {
         variantSize: selectedSize,
         placementOverride: previewResolvedPlacement ?? undefined,
         cropOverride,
+        textElements,
       });
 
       finalizedMockupUrl =
@@ -671,6 +747,7 @@ export function Customization() {
         backendRenderId: finalizedRenderId,
         placementOverride: previewResolvedPlacement ?? undefined,
         cropOverride,
+        textElements,
         userPrompt: customization.userPrompt,
         originalImageUrl: customization.imageUrl
       });
@@ -765,9 +842,18 @@ export function Customization() {
                         ? `${templateDimensions.width}/${templateDimensions.height}`
                         : '1 / 1',
                     }}
-                    onPointerMove={handlePlacementPointerMove}
-                    onPointerUp={handlePlacementPointerEnd}
-                    onPointerCancel={handlePlacementPointerEnd}
+                    onPointerMove={(e) => {
+                      handlePlacementPointerMove(e);
+                      handleTextPointerMove(e);
+                    }}
+                    onPointerUp={(e) => {
+                      handlePlacementPointerEnd(e);
+                      handleTextPointerEnd(e);
+                    }}
+                    onPointerCancel={(e) => {
+                      handlePlacementPointerEnd(e);
+                      handleTextPointerEnd(e);
+                    }}
                   >
                     <img
                       src={previewTemplateUrl}
@@ -805,6 +891,7 @@ export function Customization() {
                           opacity: 0.96,
                           borderRadius: `${previewResolvedPlacement.cornerRadius ?? 0}px`,
                           touchAction: 'none',
+                          zIndex: 10,
                         }}
                         onPointerDown={(event) => {
                           event.preventDefault();
@@ -865,8 +952,38 @@ export function Customization() {
                         alt=""
                         className="absolute inset-0 w-full h-full object-contain pointer-events-none"
                         aria-hidden="true"
+                        style={{ zIndex: 30 }}
                       />
                     )}
+
+                    {/* Text Elements */}
+                    <div className="absolute inset-0 z-40 pointer-events-none" style={{ containerType: 'inline-size' }}>
+                      {textElements.map((textEl) => (
+                        <div
+                          key={textEl.id}
+                          className={cn(
+                            "absolute whitespace-pre text-center origin-center transition-all",
+                            activeTextId === textEl.id ? "outline outline-2 outline-neon-pink outline-offset-2" : "hover:outline hover:outline-1 hover:outline-white/50",
+                            textDragState.current?.id === textEl.id ? "cursor-grabbing" : "cursor-grab pointer-events-auto"
+                          )}
+                          style={{
+                            left: `${(textEl.x / templateDimensions.width) * 100}%`,
+                            top: `${(textEl.y / templateDimensions.height) * 100}%`,
+                            color: textEl.color,
+                            fontFamily: textEl.fontFamily,
+                            fontWeight: textEl.isBold ? 'bold' : 'normal',
+                            fontStyle: textEl.isItalic ? 'italic' : 'normal',
+                            fontSize: `${(textEl.fontSize / templateDimensions.width) * 100}cqi`,
+                            letterSpacing: `${(textEl.letterSpacing || 0) / templateDimensions.width * 100}cqi`,
+                            transform: `translate(-50%, -50%) rotate(${textEl.rotation || 0}deg)`,
+                            touchAction: 'none'
+                          }}
+                          onPointerDown={(e) => handleTextPointerDown(e, textEl.id)}
+                        >
+                          {textEl.text}
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 ) : (
                   <img 
@@ -1055,15 +1172,29 @@ export function Customization() {
             <span className="text-[10px] font-mono tracking-[0.4em] text-neon-blue uppercase mb-2 block">
               Configuration Module
             </span>
-            <h1 className="text-3xl sm:text-4xl font-display font-black uppercase tracking-widest text-white mb-2">
+            <h1 className="text-3xl sm:text-4xl font-display font-black uppercase tracking-widest text-white mb-6">
               {customization.productType} Setup
             </h1>
-            {/* <p className="text-[10px] sm:text-xs text-gray-400 leading-relaxed uppercase tracking-wider max-w-md pb-6 border-b border-white/5">
-              Customized wrapping of prompt creation: <span className="text-white">"{customization.userPrompt}"</span>. Your specifications map straight into stateful print queues.
-            </p> */}
+
+            <div className="flex space-x-2 border-b border-white/10 mb-2">
+              <button
+                className={cn("px-4 py-3 text-[10px] font-bold uppercase tracking-widest border-b-2 transition-all", activeTab === 'design' ? "border-neon-blue text-neon-blue" : "border-transparent text-gray-400 hover:text-white")}
+                onClick={() => setActiveTab('design')}
+              >
+                Design & Options
+              </button>
+              <button
+                className={cn("px-4 py-3 text-[10px] font-bold uppercase tracking-widest border-b-2 transition-all flex items-center gap-2", activeTab === 'text' ? "border-neon-pink text-neon-pink" : "border-transparent text-gray-400 hover:text-white")}
+                onClick={() => setActiveTab('text')}
+              >
+                <Type size={14} /> Add Text
+              </button>
+            </div>
 
             <div className="space-y-6 sm:space-y-8 py-6 sm:py-8">
-              {customization.basePlacement && (
+              {activeTab === 'design' && (
+                <>
+                  {customization.basePlacement && (
                 <div className="hidden lg:block space-y-5 sm:space-y-6 border-b border-white/5 pb-6 sm:pb-8">
                   <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
                     <label className="flex items-center gap-2 text-[8px] font-bold text-gray-400 uppercase tracking-[0.3em] mb-3">
@@ -1230,6 +1361,180 @@ export function Customization() {
                   </button>
                 </div>
               </div>
+            </>
+            )}
+
+            {activeTab === 'text' && (
+              <div className="space-y-6 border-b border-white/5 pb-6 sm:pb-8">
+                <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                  <p className="text-[10px] uppercase tracking-widest text-gray-500 leading-relaxed mb-4">
+                    Add custom text layers. Drag the text on the preview to reposition.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const newId = `text-${Date.now()}`;
+                      setTextElements(prev => [...prev, {
+                        id: newId,
+                        text: 'New Text',
+                        fontFamily: 'Roboto',
+                        color: '#ffffff',
+                        fontSize: 48,
+                        x: templateDimensions ? templateDimensions.width / 2 : 500,
+                        y: templateDimensions ? templateDimensions.height / 2 : 500,
+                        rotation: 0,
+                        isBold: false,
+                        isItalic: false
+                      }]);
+                      setActiveTextId(newId);
+                    }}
+                    className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-white/10 hover:bg-white/20 border border-white/10 hover:border-white/30 text-white font-bold text-[10px] uppercase tracking-widest rounded-xl transition-all"
+                  >
+                    <Type size={14} /> Add New Text Block
+                  </button>
+                </div>
+
+                {textElements.length > 0 && (
+                  <div className="space-y-4">
+                    {textElements.map(textEl => (
+                      <div key={textEl.id} className={cn("rounded-2xl border bg-white/5 p-4 transition-all", activeTextId === textEl.id ? "border-neon-pink" : "border-white/10")}>
+                        <div className="flex items-center justify-between mb-4">
+                          <input
+                            type="text"
+                            value={textEl.text}
+                            onChange={(e) => setTextElements(prev => prev.map(t => t.id === textEl.id ? { ...t, text: e.target.value } : t))}
+                            onFocus={() => setActiveTextId(textEl.id)}
+                            className="bg-transparent border-b border-white/20 text-white focus:outline-none focus:border-neon-pink text-sm w-full mr-4"
+                            placeholder="Type here..."
+                          />
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setTextElements(prev => {
+                                  const idx = prev.findIndex(t => t.id === textEl.id);
+                                  if (idx === -1 || idx === prev.length - 1) return prev;
+                                  const next = [...prev];
+                                  [next[idx], next[idx + 1]] = [next[idx + 1], next[idx]];
+                                  return next;
+                                });
+                              }}
+                              className="text-gray-500 hover:text-white transition-colors text-xs font-bold uppercase tracking-widest px-2"
+                              title="Move Layer Forward"
+                            >
+                              Up
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setTextElements(prev => {
+                                  const idx = prev.findIndex(t => t.id === textEl.id);
+                                  if (idx <= 0) return prev;
+                                  const next = [...prev];
+                                  [next[idx - 1], next[idx]] = [next[idx], next[idx - 1]];
+                                  return next;
+                                });
+                              }}
+                              className="text-gray-500 hover:text-white transition-colors text-xs font-bold uppercase tracking-widest px-2"
+                              title="Move Layer Backward"
+                            >
+                              Down
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setTextElements(prev => prev.filter(t => t.id !== textEl.id))}
+                              className="text-gray-500 hover:text-neon-pink transition-colors text-xs font-bold uppercase tracking-widest ml-2"
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        </div>
+                        {activeTextId === textEl.id && (
+                          <div className="space-y-4 pt-4 border-t border-white/10">
+                            <div>
+                              <label className="block text-[8px] font-bold text-gray-400 uppercase tracking-[0.3em] mb-2">Font Size</label>
+                              <input
+                                type="range"
+                                min={12}
+                                max={200}
+                                value={textEl.fontSize}
+                                onChange={(e) => setTextElements(prev => prev.map(t => t.id === textEl.id ? { ...t, fontSize: Number(e.target.value) } : t))}
+                                className="w-full accent-[var(--color-neon-pink)]"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-[8px] font-bold text-gray-400 uppercase tracking-[0.3em] mb-2">Rotation</label>
+                              <input
+                                type="range"
+                                min={-180}
+                                max={180}
+                                value={textEl.rotation || 0}
+                                onChange={(e) => setTextElements(prev => prev.map(t => t.id === textEl.id ? { ...t, rotation: Number(e.target.value) } : t))}
+                                className="w-full accent-[var(--color-neon-pink)]"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-[8px] font-bold text-gray-400 uppercase tracking-[0.3em] mb-2">Letter Spacing</label>
+                              <input
+                                type="range"
+                                min={-20}
+                                max={100}
+                                value={textEl.letterSpacing || 0}
+                                onChange={(e) => setTextElements(prev => prev.map(t => t.id === textEl.id ? { ...t, letterSpacing: Number(e.target.value) } : t))}
+                                className="w-full accent-[var(--color-neon-pink)]"
+                              />
+                            </div>
+                            <div className="grid grid-cols-2 gap-4">
+                              <div>
+                                <label className="block text-[8px] font-bold text-gray-400 uppercase tracking-[0.3em] mb-2">Color</label>
+                                <input
+                                  type="color"
+                                  value={textEl.color}
+                                  onChange={(e) => setTextElements(prev => prev.map(t => t.id === textEl.id ? { ...t, color: e.target.value } : t))}
+                                  className="w-full h-8 rounded bg-transparent cursor-pointer"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-[8px] font-bold text-gray-400 uppercase tracking-[0.3em] mb-2">Font</label>
+                                <select
+                                  value={textEl.fontFamily}
+                                  onChange={(e) => setTextElements(prev => prev.map(t => t.id === textEl.id ? { ...t, fontFamily: e.target.value } : t))}
+                                  className="w-full bg-cyber-black border border-white/20 text-white text-xs p-1.5 rounded outline-none focus:border-neon-pink"
+                                  style={{ fontFamily: textEl.fontFamily }}
+                                >
+                                  <option value="Roboto" style={{ fontFamily: 'Roboto' }}>Roboto</option>
+                                  <option value="Impact" style={{ fontFamily: 'Impact' }}>Impact</option>
+                                  <option value="Pacifico" style={{ fontFamily: 'Pacifico' }}>Pacifico</option>
+                                  <option value="Orbitron" style={{ fontFamily: 'Orbitron' }}>Orbitron</option>
+                                  <option value="Rajdhani" style={{ fontFamily: 'Rajdhani' }}>Rajdhani</option>
+                                  <option value="Audiowide" style={{ fontFamily: 'Audiowide' }}>Audiowide</option>
+                                </select>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-4 mt-2">
+                              <button
+                                type="button"
+                                onClick={() => setTextElements(prev => prev.map(t => t.id === textEl.id ? { ...t, isBold: !t.isBold } : t))}
+                                className={cn("px-3 py-1.5 rounded border text-xs font-bold transition-colors", textEl.isBold ? "bg-neon-blue text-cyber-black border-neon-blue" : "bg-transparent text-gray-400 border-white/20 hover:border-white/50")}
+                              >
+                                BOLD
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setTextElements(prev => prev.map(t => t.id === textEl.id ? { ...t, isItalic: !t.isItalic } : t))}
+                                className={cn("px-3 py-1.5 rounded border text-xs italic transition-colors", textEl.isItalic ? "bg-neon-pink text-white border-neon-pink" : "bg-transparent text-gray-400 border-white/20 hover:border-white/50")}
+                              >
+                                ITALIC
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
             </div>
 
             {/* Quality & Delivery Assurance badges */}

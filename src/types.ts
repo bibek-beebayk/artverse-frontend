@@ -85,6 +85,20 @@ export interface CropOverride {
   height: number;
 }
 
+export interface TextElement {
+  id: string;
+  text: string;
+  fontFamily: string;
+  color: string;
+  fontSize: number;
+  x: number;
+  y: number;
+  rotation: number;
+  isBold?: boolean;
+  isItalic?: boolean;
+  letterSpacing?: number;
+}
+
 export interface ActiveCustomization {
   artworkId: string;
   sourceArtworkId?: number;
@@ -102,6 +116,7 @@ export interface ActiveCustomization {
   sizes: string[];
   colours: string[];
   basePlacement: PlacementOverride | null;
+  textElements?: TextElement[];
 }
 
 export interface GeneratedArtwork {
@@ -146,6 +161,7 @@ export interface MockupRender {
   cacheKey: string;
   placementOverride?: PlacementOverride | null;
   cropOverride?: CropOverride | null;
+  textElements?: TextElement[] | null;
   outputImage: string | null;
   outputImageUrl: string;
   processingNotes: Record<string, unknown>;
@@ -170,6 +186,7 @@ export interface CartItem {
   backendRenderId?: number;
   placementOverride?: PlacementOverride;
   cropOverride?: CropOverride;
+  textElements?: TextElement[];
   printProviderProductId?: string;
   printProviderVariantId?: string;
   userPrompt?: string;

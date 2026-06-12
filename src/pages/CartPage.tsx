@@ -1,4 +1,5 @@
 import { useCart } from '../context/CartContext.tsx';
+import { getMockupRender } from '../lib/api.ts';
 import { motion, AnimatePresence } from 'motion/react';
 import { Link } from 'react-router-dom';
 import { 
@@ -14,16 +15,20 @@ import {
   Printer,
   ChevronRight,
   PlusCircle,
-  Clock
+  Clock,
+  Eye,
+  X
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { cn } from '../lib/utils.ts';
 
 export function CartPage() {
-  const { cart, removeFromCart, updateCartQuantity, getRecommendations, addToCart } = useCart();
+  const { cart, removeFromCart, updateCartQuantity, getRecommendations, addToCart, updateCartItem } = useCart();
   const [checkoutSimulated, setCheckoutSimulated] = useState(false);
   const [checkoutSuccess, setCheckoutSuccess] = useState(false);
   const [pendingDeleteItemId, setPendingDeleteItemId] = useState<string | null>(null);
+  const [pollingRenderIds, setPollingRenderIds] = useState<Set<number>>(new Set());
+  const [previewImage, setPreviewImage] = useState<string | null>(null);
 
   const subtotal = cart.reduce((acc, item) => acc + item.price * item.quantity, 0);
   const shipping = subtotal > 50 ? 0 : 5.99;
@@ -45,6 +50,53 @@ export function CartPage() {
       document.body.style.overflow = originalOverflow;
     };
   }, [pendingDeleteItemId]);
+
+  useEffect(() => {
+    cart.forEach(item => {
+      if (item.backendRenderId && !pollingRenderIds.has(item.backendRenderId) && !item.mockupImageUrl.includes('mockup-renders')) {
+        getMockupRender(item.backendRenderId).then(render => {
+          if (render.status === 'ready' && render.outputImageUrl) {
+            if (item.mockupImageUrl !== render.outputImageUrl) {
+              updateCartItem(item.id, { mockupImageUrl: render.outputImageUrl });
+            }
+          } else if (render.status === 'pending' || render.status === 'processing') {
+            setPollingRenderIds(prev => new Set(prev).add(item.backendRenderId!));
+          }
+        }).catch(() => {});
+      }
+    });
+  }, [cart, pollingRenderIds, updateCartItem]);
+
+  useEffect(() => {
+    if (pollingRenderIds.size === 0) return;
+    const interval = setInterval(() => {
+      pollingRenderIds.forEach(async renderId => {
+        try {
+          const render = await getMockupRender(renderId);
+          if (render.status === 'ready' && render.outputImageUrl) {
+            setPollingRenderIds(prev => {
+              const next = new Set(prev);
+              next.delete(renderId);
+              return next;
+            });
+            const item = cart.find(i => i.backendRenderId === renderId);
+            if (item) {
+              updateCartItem(item.id, { mockupImageUrl: render.outputImageUrl });
+            }
+          } else if (render.status === 'failed') {
+             setPollingRenderIds(prev => {
+              const next = new Set(prev);
+              next.delete(renderId);
+              return next;
+            });
+          }
+        } catch (e) {
+          // ignore
+        }
+      });
+    }, 2000);
+    return () => clearInterval(interval);
+  }, [pollingRenderIds, cart, updateCartItem]);
 
   const handleCheckout = () => {
     setCheckoutSimulated(true);
@@ -153,27 +205,48 @@ export function CartPage() {
                   className="glass-card p-6 border-white/5 flex flex-col sm:flex-row gap-6 items-center hover:border-white/10 transition-colors"
                 >
                   {/* Photo Display Frame */}
-                  <div className="w-24 h-24 sm:w-28 sm:h-28 rounded-xl bg-cyber-black border border-white/5 overflow-hidden shrink-0 relative flex items-center justify-center p-4">
-                    {item.originalImageUrl ? (
+                  <div 
+                    className="w-24 h-24 sm:w-28 sm:h-28 rounded-xl bg-cyber-black border border-white/5 overflow-hidden shrink-0 relative flex items-center justify-center p-4 group cursor-pointer"
+                    onClick={() => setPreviewImage(item.mockupImageUrl)}
+                  >
+                    {item.mockupImageUrl.includes('mockup-renders') ? (
+                      <img 
+                        src={item.mockupImageUrl} 
+                        alt={item.productType} 
+                        className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
+                      />
+                    ) : item.originalImageUrl ? (
                       <>
                         <img 
                           src={item.mockupImageUrl} 
                           alt="Backdrop container layout" 
-                          className="w-full h-full object-contain absolute opacity-20 mix-blend-screen pointer-events-none"
+                          className="w-full h-full object-contain absolute opacity-20 mix-blend-screen pointer-events-none transition-transform duration-500 group-hover:scale-110"
                         />
                         <img 
                           src={item.originalImageUrl} 
                           alt="Original custom layout artwork" 
                           className="w-10 h-10 object-cover rounded shadow"
                         />
+                        {item.backendRenderId && pollingRenderIds.has(item.backendRenderId) && (
+                          <div className="absolute inset-0 flex items-center justify-center bg-cyber-black/40 rounded-xl">
+                            <span className="w-5 h-5 border-2 border-neon-blue border-t-transparent rounded-full animate-spin" />
+                          </div>
+                        )}
                       </>
                     ) : (
                       <img 
                         src={item.mockupImageUrl} 
                         alt={item.productType} 
-                        className="w-full h-full object-cover"
+                        className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
                       />
                     )}
+
+                    {/* Hover Overlay */}
+                    <div className="absolute inset-0 bg-cyber-black/60 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-center justify-center backdrop-blur-[2px]">
+                      <div className="bg-white/10 p-2 rounded-full text-white border border-white/20 scale-75 group-hover:scale-100 transition-transform duration-300">
+                        <Eye size={16} />
+                      </div>
+                    </div>
                   </div>
 
                   {/* Descriptions */}
@@ -264,16 +337,26 @@ export function CartPage() {
                     >
                       {/* Thumbnail with overlay */}
                       <div className="w-16 h-16 rounded-lg bg-cyber-black border border-white/5 overflow-hidden shrink-0 flex items-center justify-center p-2 relative">
-                        <img 
-                          src={rec.mockupImageUrl} 
-                          alt="Upsell visual template preview" 
-                          className="w-full h-full object-contain absolute opacity-20 mix-blend-screen"
-                        />
-                        <img 
-                          src={rec.originalImageUrl} 
-                          alt="Custom layout visual overlay" 
-                          className="w-6 h-6 object-cover rounded shadow relative z-10"
-                        />
+                        {rec.mockupImageUrl.includes('mockup-renders') ? (
+                          <img 
+                            src={rec.mockupImageUrl} 
+                            alt="Upsell visual template preview" 
+                            className="w-full h-full object-cover absolute"
+                          />
+                        ) : (
+                          <>
+                            <img 
+                              src={rec.mockupImageUrl} 
+                              alt="Upsell visual template preview" 
+                              className="w-full h-full object-contain absolute opacity-20 mix-blend-screen"
+                            />
+                            <img 
+                              src={rec.originalImageUrl} 
+                              alt="Custom layout visual overlay" 
+                              className="w-6 h-6 object-cover rounded shadow relative z-10"
+                            />
+                          </>
+                        )}
                       </div>
 
                       {/* Info & Add-to-cart */}
@@ -406,11 +489,28 @@ export function CartPage() {
               <div className="mt-5 rounded-2xl border border-white/10 bg-white/5 p-4">
                 <div className="flex items-center gap-4">
                   <div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-white/10 bg-cyber-black/60 p-2">
-                    <img
-                      src={pendingDeleteItem.mockupImageUrl}
-                      alt={pendingDeleteItem.productType}
-                      className="h-full w-full object-contain"
-                    />
+                    {pendingDeleteItem.mockupImageUrl.includes('mockup-renders') ? (
+                      <img
+                        src={pendingDeleteItem.mockupImageUrl}
+                        alt={pendingDeleteItem.productType}
+                        className="h-full w-full object-cover"
+                      />
+                    ) : (
+                      <>
+                        <img
+                          src={pendingDeleteItem.mockupImageUrl}
+                          alt={pendingDeleteItem.productType}
+                          className="h-full w-full object-contain absolute opacity-20 mix-blend-screen"
+                        />
+                        {pendingDeleteItem.originalImageUrl && (
+                          <img 
+                            src={pendingDeleteItem.originalImageUrl} 
+                            alt="Original artwork" 
+                            className="w-6 h-6 object-cover rounded shadow relative z-10"
+                          />
+                        )}
+                      </>
+                    )}
                   </div>
                   <div className="min-w-0">
                     <p className="text-[10px] font-mono uppercase tracking-[0.3em] text-neon-blue">
@@ -445,6 +545,36 @@ export function CartPage() {
             </motion.div>
           </motion.div>
         ) : null}
+
+        {previewImage && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[130] flex items-center justify-center p-4 bg-cyber-black/95 backdrop-blur-xl"
+            onClick={() => setPreviewImage(null)}
+          >
+            <button
+              onClick={() => setPreviewImage(null)}
+              className="absolute top-6 right-6 p-3 bg-white/10 hover:bg-white/20 hover:text-neon-pink rounded-full transition-all text-white z-[140]"
+            >
+              <X size={24} />
+            </button>
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="relative w-full max-w-5xl max-h-[90vh] rounded-2xl overflow-hidden shadow-2xl border border-white/10 flex items-center justify-center bg-cyber-black/50"
+              onClick={e => e.stopPropagation()}
+            >
+              <img 
+                src={previewImage} 
+                alt="Full Preview" 
+                className="w-full h-full max-h-[90vh] object-contain"
+              />
+            </motion.div>
+          </motion.div>
+        )}
       </AnimatePresence>
     </div>
   );

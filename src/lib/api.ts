@@ -1,4 +1,4 @@
-import type { Artwork, CollectionSummary, CropOverride, MockupRender, MockupTemplate, PlacementOverride, Product, VideoClip } from "../types.ts";
+import type { Artwork, CollectionSummary, CropOverride, MockupRender, MockupTemplate, PlacementOverride, Product, TextElement, VideoClip } from "../types.ts";
 
 interface BackendCategory {
   id: number;
@@ -85,6 +85,7 @@ interface BackendMockupRender {
     width?: number;
     height?: number;
   } | null;
+  text_elements?: any[] | null;
   status: 'pending' | 'processing' | 'ready' | 'failed';
   cache_key: string;
   output_image: string | null;
@@ -357,6 +358,19 @@ function mapMockupRender(render: BackendMockupRender): MockupRender {
       }
     : null;
 
+  const textElements: TextElement[] | null = render.text_elements
+    ? render.text_elements.map((t: any) => ({
+        id: String(t.id),
+        text: String(t.text),
+        fontFamily: String(t.fontFamily),
+        color: String(t.color),
+        fontSize: Number(t.fontSize),
+        x: Number(t.x),
+        y: Number(t.y),
+        rotation: Number(t.rotation || 0),
+      }))
+    : null;
+
   return {
     id: render.id,
     template: mapMockupTemplate(render.template),
@@ -368,6 +382,7 @@ function mapMockupRender(render: BackendMockupRender): MockupRender {
     variantSize: render.variant_size,
     placementOverride,
     cropOverride,
+    textElements,
     status: render.status,
     cacheKey: render.cache_key,
     outputImage: resolveAssetUrl(render.output_image),
@@ -451,6 +466,7 @@ export async function createMockupRender(input: {
   variantSize?: string;
   placementOverride?: PlacementOverride;
   cropOverride?: CropOverride;
+  textElements?: TextElement[];
 }) {
   const placementOverride = input.placementOverride
     ? {
@@ -487,6 +503,7 @@ export async function createMockupRender(input: {
             height: input.cropOverride.height,
           }
         : undefined,
+      text_elements: input.textElements,
     }),
   });
 
@@ -495,6 +512,11 @@ export async function createMockupRender(input: {
     message: response.message,
     render: mapMockupRender(response.render),
   };
+}
+
+export async function getMockupRender(id: number) {
+  const response = await fetchJson<BackendMockupRender>(`/generator/mockup-renders/${id}/`);
+  return mapMockupRender(response);
 }
 
 export async function getMaintenanceStatus(token?: string) {

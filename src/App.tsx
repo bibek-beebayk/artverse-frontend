@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { Suspense, lazy, useEffect, type ComponentType } from 'react';
+import { Suspense, lazy, useEffect, useState, type ComponentType } from 'react';
 import { BrowserRouter as Router, Routes, Route, useLocation } from 'react-router-dom';
 import { LogIn, ShieldCheck, Sparkles } from 'lucide-react';
 import { Layout } from './components/Common.tsx';
@@ -32,10 +32,41 @@ function ScrollToTop() {
 }
 
 function RouteFallback() {
+  const [progress, setProgress] = useState(0);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setProgress((prev) => {
+        if (prev >= 99) return 99;
+        const increment = Math.max(1, Math.floor((99 - prev) * 0.15));
+        return prev + increment;
+      });
+    }, 50);
+    return () => clearInterval(timer);
+  }, []);
+
   return (
-    <div className="mx-auto flex min-h-[50vh] max-w-7xl items-center justify-center px-6 py-12">
-      <div className="glass-card border-white/10 px-6 py-4 text-xs font-bold uppercase tracking-[0.4em] text-gray-400">
-        Loading Artverse
+    <div className="mx-auto flex min-h-[50vh] max-w-7xl flex-col items-center justify-center px-6 py-12 gap-8">
+      <div className="relative flex items-center justify-center w-16 h-16">
+        <div className="absolute inset-0 rounded-full border-t-2 border-neon-blue animate-spin" />
+        <div className="absolute inset-2 rounded-full border-b-2 border-neon-purple animate-spin [animation-direction:reverse]" />
+        <Sparkles size={20} className="text-neon-pink animate-pulse" />
+      </div>
+      <div className="flex flex-col items-center gap-4 w-full max-w-xs">
+        <div className="flex items-center justify-between w-full">
+          <div className="text-[10px] font-bold uppercase tracking-[0.4em] text-gray-400 animate-pulse">
+            Loading Artverse Module
+          </div>
+          <div className="text-[10px] font-mono font-bold tracking-widest text-neon-blue">
+            {progress}%
+          </div>
+        </div>
+        <div className="w-full h-1 bg-white/10 rounded-full overflow-hidden relative">
+          <div 
+            className="absolute top-0 left-0 h-full bg-gradient-to-r from-neon-blue via-neon-purple to-neon-pink rounded-full shadow-[0_0_10px_rgba(188,19,254,0.5)] transition-all duration-100 ease-out" 
+            style={{ width: `${progress}%` }}
+          />
+        </div>
       </div>
     </div>
   );

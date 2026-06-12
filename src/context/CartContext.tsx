@@ -6,6 +6,7 @@ interface CartContextType {
   addToCart: (item: CartItem) => void;
   removeFromCart: (itemId: string) => void;
   updateCartQuantity: (itemId: string, quantity: number) => void;
+  updateCartItem: (itemId: string, updates: Partial<CartItem>) => void;
   clearCart: () => void;
   activeCustomization: ActiveCustomization | null;
   setActiveCustomization: (customization: ActiveCustomization | null) => void;
@@ -58,13 +59,15 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
   const addToCart = useCallback((newItem: CartItem) => {
     setCart((prev) => {
       // Check if exact same item exists (same artwork, same productType, size, and colour)
+      // Check if exact same item exists (same artwork, same productType, size, and colour)
       const existingIdx = prev.findIndex(
         (item) =>
           item.generatedArtworkId === newItem.generatedArtworkId &&
           item.sourceArtworkId === newItem.sourceArtworkId &&
           item.productType === newItem.productType &&
           item.selectedSize === newItem.selectedSize &&
-          item.selectedColour === newItem.selectedColour
+          item.selectedColour === newItem.selectedColour &&
+          JSON.stringify(item.textElements || []) === JSON.stringify(newItem.textElements || [])
       );
 
       if (existingIdx > -1) {
@@ -83,6 +86,12 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
   const updateCartQuantity = useCallback((itemId: string, quantity: number) => {
     setCart((prev) =>
       prev.map((item) => (item.id === itemId ? { ...item, quantity: Math.max(1, quantity) } : item))
+    );
+  }, []);
+
+  const updateCartItem = useCallback((itemId: string, updates: Partial<CartItem>) => {
+    setCart((prev) =>
+      prev.map((item) => (item.id === itemId ? { ...item, ...updates } : item))
     );
   }, []);
 
@@ -181,6 +190,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       addToCart,
       removeFromCart,
       updateCartQuantity,
+      updateCartItem,
       clearCart,
       activeCustomization,
       setActiveCustomization,
@@ -193,6 +203,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       addToCart,
       removeFromCart,
       updateCartQuantity,
+      updateCartItem,
       clearCart,
       activeCustomization,
       setActiveCustomization,
