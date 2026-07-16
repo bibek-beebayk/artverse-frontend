@@ -22,6 +22,7 @@ const Favorites = lazy(() => import('./pages/Favorites.tsx').then((module) => ({
 const Generator = lazy(() => import('./pages/Generator.tsx').then((module) => ({ default: module.Generator })));
 const CartPage = lazy(() => import('./pages/CartPage.tsx').then((module) => ({ default: module.CartPage })));
 const CollectionDetail = lazy(() => import('./pages/CollectionDetail.tsx').then((module) => ({ default: module.CollectionDetail })));
+const SavedDesigns = lazy(() => import('./pages/SavedDesigns.tsx').then((module) => ({ default: module.SavedDesigns })));
 
 function ScrollToTop() {
   const { pathname } = useLocation();
@@ -126,6 +127,7 @@ function PageRoutes() {
           <Route path="/favorites" element={<Favorites />} />
           <Route path="/generator" element={<ProtectedDreamAccess component={Generator} />} />
           <Route path="/customize" element={<ProtectedDreamAccess component={Customization} />} />
+          <Route path="/saved-designs" element={<ProtectedDreamAccess component={SavedDesigns} />} />
           <Route path="/cart" element={<CartPage />} />
           <Route path="/collections/:collectionId" element={<CollectionDetail />} />
         </Routes>

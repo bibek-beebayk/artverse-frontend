@@ -101,6 +101,7 @@ export interface TextElement {
 
 export interface PartCustomization {
   sourceArtworkId?: number;
+  sourceGeneratedImageId?: number;
   imageUrl?: string;
   userPrompt?: string;
   placementOverride?: PlacementOverride;
@@ -113,6 +114,7 @@ export interface PartCustomization {
 export interface ActiveCustomization {
   artworkId: string;
   sourceArtworkId?: number;
+  sourceGeneratedImageId?: number;
   userPrompt: string;
   imageUrl: string;
   templateId: number;
@@ -130,6 +132,9 @@ export interface ActiveCustomization {
   basePlacement: PlacementOverride | null;
   textElements?: TextElement[];
   partsConfig?: Record<string, PartCustomization>;
+  designProjectId?: number;
+  productId?: number;
+  selectedVariantId?: number;
 }
 
 export interface GeneratedArtwork {
@@ -168,7 +173,11 @@ export interface MockupTemplate {
   config: Record<string, unknown>;
   supportedColors: string[];
   supportedSizes: string[];
+  canvasWidth?: number | null;
+  canvasHeight?: number | null;
+  supportedFileFormats?: string[];
   parts?: MockupTemplatePart[];
+  variants?: ProductVariant[];
   updatedAt: string;
 }
 
@@ -216,4 +225,97 @@ export interface CartItem {
   userPrompt?: string;
   originalImageUrl?: string;
   partsConfig?: Record<string, PartCustomization>;
+  designProjectId?: number;
+}
+
+// --- Saved design projects (backend-persisted customizations) ---
+
+export type DesignProjectStatus = 'draft' | 'ready' | 'archived';
+
+export interface ProductVariant {
+  id: number;
+  productId: number | null;
+  templateId: number;
+  sku: string;
+  name: string;
+  colorName: string;
+  colorHex: string;
+  size: string;
+  price: string | null;
+  baseCost?: string | null;
+  inventory: number;
+  isAvailable: boolean;
+  supportedPrintAreas: string[];
+  externalProvider?: string;
+  externalVariantId?: string;
+  image?: string | null;
+  updatedAt?: string;
+}
+
+export interface DesignProjectProductSummary {
+  id: number;
+  name: string;
+  slug: string;
+  mockupTemplate: number | null;
+}
+
+export interface DesignProjectTemplateSummary {
+  id: number;
+  name: string;
+  productType: string;
+}
+
+export interface DesignPlacement {
+  id?: number;
+  partName: string;
+  templatePartId?: number | null;
+  sourceArtworkId?: number | null;
+  sourceGeneratedImageId?: number | null;
+  sourceImageUrl?: string;
+  sourcePrompt?: string;
+  placementOverride: PlacementOverride;
+  cropOverride: CropOverride;
+  textElements: TextElement[];
+  previewRenderId?: number | null;
+  previewUrl?: string;
+  printFileUrl?: string;
+  metadata?: Record<string, unknown>;
+}
+
+/** Lightweight summary shape returned by the design-projects list endpoint (no nested placements). */
+export interface DesignProjectSummary {
+  id: number;
+  name: string;
+  status: DesignProjectStatus;
+  product: DesignProjectProductSummary | null;
+  template: DesignProjectTemplateSummary;
+  selectedVariant: ProductVariant | null;
+  selectedColor: string;
+  selectedSize: string;
+  thumbnailUrl: string | null;
+  placementCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Full detail shape returned by the design-project detail endpoint (and after create/update). */
+export interface DesignProject {
+  id: number;
+  name: string;
+  status: DesignProjectStatus;
+  product: DesignProjectProductSummary | null;
+  mockupTemplate: MockupTemplate;
+  selectedVariant: ProductVariant | null;
+  selectedColor: string;
+  selectedSize: string;
+  sourceArtworkId?: number | null;
+  sourceGeneratedImageId?: number | null;
+  sourceImageUrl?: string;
+  sourcePrompt?: string;
+  thumbnail: string | null;
+  thumbnailUrl: string | null;
+  metadata: Record<string, unknown>;
+  placements: DesignPlacement[];
+  createdAt: string;
+  updatedAt: string;
 }

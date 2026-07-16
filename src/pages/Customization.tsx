@@ -1,27 +1,38 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate, Link, useLocation } from 'react-router-dom';
+import { useNavigate, Link, useLocation, useSearchParams } from 'react-router-dom';
 import { useCart } from '../context/CartContext.tsx';
+import { useAuth } from '../context/AuthContext.tsx';
 import { motion, AnimatePresence } from 'motion/react';
-import { 
-  ChevronLeft, 
-  Layers, 
-  Check, 
-  ShoppingBag, 
-  Maximize2, 
-  HelpCircle, 
-  ShieldCheck, 
-  Truck, 
+import {
+  ChevronLeft,
+  Layers,
+  Check,
+  ShoppingBag,
+  Maximize2,
+  HelpCircle,
+  ShieldCheck,
+  Truck,
   Sparkles,
   Info,
   Move,
   Crop,
-  Type
+  Type,
+  Save,
+  Loader2,
+  AlertCircle,
 } from 'lucide-react';
 import { cn } from '../lib/utils.ts';
 import { ImageModal } from '../components/Common.tsx';
 import { TShirtTemplate } from '../components/TShirtTemplate.tsx';
-import { createMockupRender } from '../lib/api.ts';
+import { ApiError, createMockupRender, getDesignProject, createDesignProject, updateDesignProject } from '../lib/api.ts';
+import {
+  isPartConfigured,
+  mapDesignProjectToActiveCustomization,
+  mapEditorStateToDesignProjectWriteInput,
+} from '../lib/designProjectMapping.ts';
 import type { ActiveCustomization, CropOverride, PartCustomization, PlacementOverride, TextElement } from '../types.ts';
+
+type SaveStatus = 'idle' | 'dirty' | 'saving' | 'saved' | 'error';
 
 const MIN_CROP_SIZE = 12;
 const CROP_HANDLE_SIZE = 18;
@@ -89,8 +100,10 @@ function extractPlacementFromConfig(config: Record<string, unknown> | undefined 
 
 export function Customization() {
   const { activeCustomization, addToCart, setActiveCustomization } = useCart();
+  const { user, signIn } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
+  const [searchParams, setSearchParams] = useSearchParams();
   const routeCustomization = (location.state as { customization?: ActiveCustomization } | null)?.customization;
   const customization = useMemo(() => {
     const candidate = activeCustomization ?? routeCustomization ?? null;
@@ -179,6 +192,70 @@ export function Customization() {
     width: number;
     height: number;
   } | null>(null);
+
+  // --- Saved design project: loading, naming, save status ---
+  const projectIdParam = searchParams.get('project');
+  const [currentProjectId, setCurrentProjectId] = useState<number | undefined>(undefined);
+  const [projectName, setProjectName] = useState('');
+  const [isLoadingProject, setIsLoadingProject] = useState(false);
+  const [projectLoadError, setProjectLoadError] = useState<string | null>(null);
+  const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle');
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [finalizationStage, setFinalizationStage] = useState<string | null>(null);
+  const skipNextDirtyRef = useRef(false);
+  const pendingSaveAfterLoginRef = useRef(false);
+  const loadedProjectIdRef = useRef<number | undefined>(undefined);
+
+  useEffect(() => {
+    const idFromUrl = projectIdParam ? Number(projectIdParam) : undefined;
+    if (!idFromUrl || Number.isNaN(idFromUrl) || loadedProjectIdRef.current === idFromUrl) {
+      return;
+    }
+
+    let isCancelled = false;
+    loadedProjectIdRef.current = idFromUrl;
+    setIsLoadingProject(true);
+    setProjectLoadError(null);
+
+    getDesignProject(idFromUrl)
+      .then((project) => {
+        if (isCancelled) return;
+        const config = (project.mockupTemplate.config || {}) as Record<string, unknown>;
+        const basePrice = Number((config as { base_price?: unknown }).base_price ?? 0) || 0;
+        const nextCustomization = mapDesignProjectToActiveCustomization(project, {
+          basePrice,
+          sizes: project.mockupTemplate.supportedSizes,
+          colours: project.mockupTemplate.supportedColors,
+        });
+        skipNextDirtyRef.current = true;
+        setActiveCustomization(nextCustomization);
+        setCurrentProjectId(project.id);
+        setProjectName(project.name);
+        setSaveStatus('idle');
+      })
+      .catch((error) => {
+        if (isCancelled) return;
+        loadedProjectIdRef.current = undefined;
+        setProjectLoadError(error instanceof Error ? error.message : 'Could not load this saved design.');
+      })
+      .finally(() => {
+        if (!isCancelled) setIsLoadingProject(false);
+      });
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [projectIdParam, setActiveCustomization]);
+
+  // Mark the project dirty on any change that would need saving — but not on the render
+  // right after we just loaded or saved (skipNextDirtyRef swallows exactly one run).
+  useEffect(() => {
+    if (skipNextDirtyRef.current) {
+      skipNextDirtyRef.current = false;
+      return;
+    }
+    setSaveStatus((current) => (current === 'saving' ? current : 'dirty'));
+  }, [partsConfig, projectName, selectedColour, selectedSize, textElements, placementDraft, appliedCropOverride, cornerRadius]);
 
   useEffect(() => {
     if (!activeCustomization && routeCustomization) {
@@ -806,45 +883,175 @@ export function Customization() {
     }
   };
 
+  // The active part's live-drafted placement/crop/text lives in top-level state, separate
+  // from partsConfig, until a part switch folds it in (see handlePartChange). Saving or
+  // adding to cart needs the FULL current state, so fold the active part in here too.
+  const captureCurrentPartsConfig = (): Record<string, PartCustomization> => ({
+    ...partsConfig,
+    [activePart]: {
+      ...partsConfig[activePart],
+      placementOverride: previewResolvedPlacement ?? undefined,
+      cropOverride: appliedCropOverride ?? undefined,
+      textElements,
+    },
+  });
+
+  const persistDesignProject = async (partsConfigToSave: Record<string, PartCustomization>) => {
+    const input = mapEditorStateToDesignProjectWriteInput({
+      name: projectName,
+      mockupTemplateId: customization.templateId,
+      productId: customization.productId,
+      selectedVariantId: customization.selectedVariantId,
+      selectedColor: selectedColour,
+      selectedSize,
+      sourceArtworkId: customization.sourceArtworkId,
+      sourceGeneratedImageId: customization.sourceGeneratedImageId,
+      sourceImageUrl: customization.imageUrl,
+      sourcePrompt: customization.userPrompt,
+      partsConfig: partsConfigToSave,
+    });
+
+    if (currentProjectId) {
+      return updateDesignProject(currentProjectId, input, { method: 'PATCH' });
+    }
+
+    const created = await createDesignProject(input);
+    setCurrentProjectId(created.id);
+    loadedProjectIdRef.current = created.id;
+    setSearchParams(
+      (previous) => {
+        const next = new URLSearchParams(previous);
+        next.set('project', String(created.id));
+        return next;
+      },
+      { replace: true }
+    );
+    return created;
+  };
+
+  const handleSaveDesign = async () => {
+    if (!customization) return;
+
+    if (!user) {
+      // /customize already requires sign-in to view at all, so this path mainly covers a
+      // session that expired mid-edit rather than a truly anonymous visitor (see the 401
+      // branch below, which is the more realistic trigger for the same recovery flow).
+      pendingSaveAfterLoginRef.current = true;
+      void signIn();
+      return;
+    }
+
+    setSaveStatus('saving');
+    setSaveError(null);
+    try {
+      const merged = captureCurrentPartsConfig();
+      setPartsConfig(merged);
+      await persistDesignProject(merged);
+      skipNextDirtyRef.current = true;
+      setSaveStatus('saved');
+      window.setTimeout(() => {
+        setSaveStatus((current) => (current === 'saved' ? 'idle' : current));
+      }, 3000);
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) {
+        pendingSaveAfterLoginRef.current = true;
+        void signIn();
+        return;
+      }
+      setSaveStatus('error');
+      setSaveError(error instanceof Error ? error.message : 'Could not save this design.');
+    }
+  };
+
+  // If a save/finalize attempt hit a 401 (expired session) and the user re-authenticated,
+  // automatically retry instead of making them click Save again and lose the moment.
+  useEffect(() => {
+    if (user && pendingSaveAfterLoginRef.current) {
+      pendingSaveAfterLoginRef.current = false;
+      void handleSaveDesign();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user]);
+
   const handleConfirmAddToCart = async () => {
+    if (!customization) return;
     setIsAdding(true);
     setPreviewLoading(true);
     setPreviewError(null);
+    setFinalizationStage(null);
 
     try {
-      let finalizedMockupUrl = customization.mockupImageUrl;
-      let finalizedRenderId = previewRenderId;
+      let workingPartsConfig = captureCurrentPartsConfig();
+      const partsNeedingRender = Object.entries(workingPartsConfig).filter(([, part]) => isPartConfigured(part));
 
-      const response = await createMockupRender({
-        templateId: customization.templateId,
-        artworkId: customization.sourceArtworkId,
-        sourceImageUrl: customization.imageUrl,
-        sourcePrompt: customization.userPrompt,
-        variantColor: selectedColour,
-        variantSize: selectedSize,
-        placementOverride: previewResolvedPlacement ?? undefined,
-        cropOverride,
-        textElements,
-        partName: activePart,
-      });
-
-      finalizedMockupUrl =
-        response.render.outputImage || response.render.outputImageUrl || customization.mockupImageUrl;
-      finalizedRenderId = response.render.id;
-      setPreviewRenderId(response.render.id);
-
-      const finalPartsConfig: Record<string, PartCustomization> = {
-        ...partsConfig,
-        [activePart]: {
-          ...partsConfig[activePart],
+      if (partsNeedingRender.length === 0) {
+        // Non-part product (mug, poster, etc.), or nothing part-specific configured yet —
+        // fall back to the original single-render behavior using the active part directly.
+        setFinalizationStage('Preparing your design…');
+        const response = await createMockupRender({
+          templateId: customization.templateId,
+          artworkId: customization.sourceArtworkId,
+          sourceImageUrl: customization.imageUrl,
+          sourcePrompt: customization.userPrompt,
+          variantColor: selectedColour,
+          variantSize: selectedSize,
           placementOverride: previewResolvedPlacement ?? undefined,
-          cropOverride: cropOverride ?? undefined,
+          cropOverride,
           textElements,
-          mockupImageUrl: finalizedMockupUrl,
-          backendRenderId: finalizedRenderId,
-        },
-      };
-      setPartsConfig(finalPartsConfig);
+          partName: activePart,
+        });
+        workingPartsConfig = {
+          ...workingPartsConfig,
+          [activePart]: {
+            ...workingPartsConfig[activePart],
+            placementOverride: previewResolvedPlacement ?? undefined,
+            cropOverride: cropOverride ?? undefined,
+            textElements,
+            mockupImageUrl: response.render.outputImage || response.render.outputImageUrl || customization.mockupImageUrl,
+            backendRenderId: response.render.id,
+          },
+        };
+      } else {
+        for (const [partName, part] of partsNeedingRender) {
+          setFinalizationStage(`Preparing ${partName.replace(/_/g, ' ')}…`);
+          const response = await createMockupRender({
+            templateId: customization.templateId,
+            artworkId: part.sourceArtworkId ?? customization.sourceArtworkId,
+            sourceImageUrl: part.imageUrl ?? customization.imageUrl,
+            sourcePrompt: part.userPrompt ?? customization.userPrompt,
+            variantColor: selectedColour,
+            variantSize: selectedSize,
+            placementOverride: part.placementOverride,
+            cropOverride: part.cropOverride,
+            textElements: part.textElements ?? [],
+            partName,
+          });
+          workingPartsConfig = {
+            ...workingPartsConfig,
+            [partName]: {
+              ...part,
+              mockupImageUrl: response.render.outputImage || response.render.outputImageUrl || part.mockupImageUrl,
+              backendRenderId: response.render.id,
+            },
+          };
+        }
+      }
+
+      setPartsConfig(workingPartsConfig);
+
+      let savedProjectId = currentProjectId;
+      if (user) {
+        setFinalizationStage('Saving design…');
+        const saved = await persistDesignProject(workingPartsConfig);
+        savedProjectId = saved.id;
+        skipNextDirtyRef.current = true;
+        setSaveStatus('saved');
+      }
+
+      const primaryPart = workingPartsConfig[activePart] ?? workingPartsConfig['front'];
+      const finalizedMockupUrl = primaryPart?.mockupImageUrl || customization.mockupImageUrl;
+      const finalizedRenderId = primaryPart?.backendRenderId ?? previewRenderId;
+      setPreviewRenderId(finalizedRenderId);
 
       const cartItemId = `cart-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
       addToCart({
@@ -859,12 +1066,13 @@ export function Customization() {
         price: customization.basePrice,
         templateId: customization.templateId,
         backendRenderId: finalizedRenderId,
-        placementOverride: previewResolvedPlacement ?? undefined,
-        cropOverride,
-        textElements,
+        placementOverride: primaryPart?.placementOverride ?? previewResolvedPlacement ?? undefined,
+        cropOverride: primaryPart?.cropOverride ?? cropOverride,
+        textElements: primaryPart?.textElements ?? textElements,
         userPrompt: customization.userPrompt,
         originalImageUrl: customization.imageUrl,
-        partsConfig: finalPartsConfig,
+        partsConfig: workingPartsConfig,
+        designProjectId: savedProjectId,
       });
 
       setIsSuccess(true);
@@ -872,10 +1080,19 @@ export function Customization() {
         setIsSuccess(false);
         navigate('/cart');
       }, 1500);
-    } catch (renderError) {
-      console.error('Failed to finalize backend mockup render:', renderError);
-      setPreviewError('Could not finalize this mockup right now. Please try again.');
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) {
+        pendingSaveAfterLoginRef.current = true;
+        void signIn();
+        setPreviewError('Please sign in again — retrying automatically once you do.');
+        return;
+      }
+      console.error('Failed to finalize backend mockup render:', error);
+      setPreviewError(
+        error instanceof Error ? error.message : 'Could not finalize this mockup right now. Please try again.'
+      );
     } finally {
+      setFinalizationStage(null);
       setPreviewLoading(false);
       setIsAdding(false);
     }
@@ -1151,7 +1368,7 @@ export function Customization() {
                 </div>
                 <div className="text-center">
                   <p className="text-[10px] font-bold uppercase tracking-[0.35em] text-white">
-                    {previewLoading ? 'Finalizing Mockup' : 'Loading Preview'}
+                    {previewLoading ? finalizationStage || 'Finalizing Mockup' : 'Loading Preview'}
                   </p>
                   <p className="mt-2 text-[9px] uppercase tracking-widest text-gray-400">
                     {previewLoading
@@ -1314,9 +1531,61 @@ export function Customization() {
             <span className="text-[10px] font-mono tracking-[0.4em] text-neon-blue uppercase mb-2 block">
               Configuration Module
             </span>
-            <h1 className="text-3xl sm:text-4xl font-display font-black uppercase tracking-widest text-white mb-6">
+            <h1 className="text-3xl sm:text-4xl font-display font-black uppercase tracking-widest text-white mb-4">
               {customization.productType} Setup
             </h1>
+
+            <div className="mb-6 flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-4">
+              <input
+                type="text"
+                value={projectName}
+                onChange={(event) => setProjectName(event.target.value)}
+                placeholder="Untitled Design"
+                aria-label="Design project name"
+                className="w-full sm:max-w-xs rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm font-bold text-white placeholder:text-gray-500 focus:outline-none focus:border-neon-blue"
+              />
+              <div className="flex items-center gap-2 text-[9px] font-bold uppercase tracking-widest">
+                {saveStatus === 'saving' && (
+                  <span className="inline-flex items-center gap-1.5 text-gray-400">
+                    <Loader2 size={12} className="animate-spin" /> Saving…
+                  </span>
+                )}
+                {saveStatus === 'saved' && (
+                  <span className="inline-flex items-center gap-1.5 text-emerald-400">
+                    <Check size={12} /> Saved
+                  </span>
+                )}
+                {saveStatus === 'dirty' && (
+                  <span className="inline-flex items-center gap-1.5 text-neon-blue">
+                    <span className="h-1.5 w-1.5 rounded-full bg-neon-blue" /> Unsaved changes
+                  </span>
+                )}
+                {saveStatus === 'error' && (
+                  <span className="inline-flex items-center gap-1.5 text-neon-pink" title={saveError || undefined}>
+                    <AlertCircle size={12} /> Save failed
+                  </span>
+                )}
+                <button
+                  type="button"
+                  onClick={() => void handleSaveDesign()}
+                  disabled={saveStatus === 'saving'}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-gray-300 transition-all hover:border-neon-blue hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <Save size={12} /> Save Design
+                </button>
+              </div>
+            </div>
+
+            {isLoadingProject && (
+              <div className="mb-6 rounded-xl border border-neon-blue/20 bg-neon-blue/5 px-4 py-3 text-[10px] uppercase tracking-widest text-neon-blue">
+                Loading saved design…
+              </div>
+            )}
+            {projectLoadError && (
+              <div className="mb-6 rounded-xl border border-neon-pink/30 bg-neon-pink/10 px-4 py-3 text-[10px] uppercase tracking-widest text-neon-pink">
+                {projectLoadError}
+              </div>
+            )}
 
             <div className="flex space-x-2 border-b border-white/10 mb-2">
               <button

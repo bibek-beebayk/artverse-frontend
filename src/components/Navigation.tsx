@@ -23,6 +23,7 @@ const navLinks = [
   { name: 'Home', path: '/' },
   { name: 'Gallery', path: '/gallery' },
   { name: 'Dream', path: '/generator' },
+  { name: 'Saved', path: '/saved-designs' },
   { name: 'Favs', path: '/favorites' },
   { name: 'About', path: '/about' },
   { name: 'Shop', path: '/shop' },

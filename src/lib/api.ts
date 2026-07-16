@@ -1,4 +1,22 @@
-import type { Artwork, CollectionSummary, CropOverride, MockupRender, MockupTemplate, MockupTemplatePart, PlacementOverride, Product, TextElement, VideoClip } from "../types.ts";
+import type {
+  Artwork,
+  CollectionSummary,
+  CropOverride,
+  DesignPlacement,
+  DesignProject,
+  DesignProjectProductSummary,
+  DesignProjectStatus,
+  DesignProjectSummary,
+  DesignProjectTemplateSummary,
+  MockupRender,
+  MockupTemplate,
+  MockupTemplatePart,
+  PlacementOverride,
+  Product,
+  ProductVariant,
+  TextElement,
+  VideoClip,
+} from "../types.ts";
 
 interface BackendCategory {
   id: number;
@@ -61,6 +79,26 @@ interface BackendMockupTemplatePart {
   config: Record<string, unknown>;
 }
 
+interface BackendProductVariant {
+  id: number;
+  product_id: number | null;
+  template_id: number;
+  sku: string;
+  name: string;
+  color_name: string;
+  color_hex: string;
+  size: string;
+  price: string | null;
+  base_cost: string | null;
+  inventory: number;
+  is_available: boolean;
+  supported_print_areas: string[];
+  external_provider: string;
+  external_variant_id: string;
+  image: string | null;
+  updated_at: string;
+}
+
 interface BackendMockupTemplate {
   id: number;
   name: string;
@@ -77,7 +115,11 @@ interface BackendMockupTemplate {
   config: Record<string, unknown>;
   supported_colors: string[];
   supported_sizes: string[];
+  canvas_width: number | null;
+  canvas_height: number | null;
+  supported_file_formats: string[];
   parts?: BackendMockupTemplatePart[];
+  variants?: BackendProductVariant[];
   updated_at: string;
 }
 
@@ -152,6 +194,42 @@ const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, "") || "http://localhost:8000/api";
 const ACCESS_TOKEN_STORAGE_KEY = "artverse_backend_access_token";
 const REFRESH_TOKEN_STORAGE_KEY = "artverse_backend_refresh_token";
+
+export class ApiError extends Error {
+  status: number;
+  fieldErrors: Record<string, unknown>;
+
+  constructor(message: string, status: number, fieldErrors: Record<string, unknown> = {}) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.fieldErrors = fieldErrors;
+  }
+}
+
+function formatFieldErrors(data: Record<string, unknown>): string {
+  const parts: string[] = [];
+
+  const describe = (field: string, value: unknown) => {
+    const messages = Array.isArray(value) ? value : [value];
+    for (const message of messages) {
+      if (typeof message === "string") {
+        parts.push(field === "non_field_errors" ? message : `${field}: ${message}`);
+      } else if (message && typeof message === "object") {
+        for (const [nestedField, nestedMessage] of Object.entries(message as Record<string, unknown>)) {
+          describe(`${field}.${nestedField}`, nestedMessage);
+        }
+      }
+    }
+  };
+
+  for (const [field, value] of Object.entries(data)) {
+    if (field === "detail") continue;
+    describe(field, value);
+  }
+
+  return parts.join(" ");
+}
 
 function getApiOrigin() {
   try {
@@ -231,10 +309,15 @@ async function requestJson<T>(path: string, init?: RequestInit, retryOn401 = tru
     headers.set("Authorization", `Bearer ${accessToken}`);
   }
 
-  const response = await fetch(`${API_BASE_URL}${path}`, {
-    ...init,
-    headers,
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}${path}`, {
+      ...init,
+      headers,
+    });
+  } catch {
+    throw new ApiError("Network error — could not reach the server. Check your connection and try again.", 0);
+  }
   const data = (await response.json().catch(() => ({}))) as T & { detail?: string };
 
   if (response.status === 401 && retryOn401 && getBackendRefreshToken()) {
@@ -257,7 +340,17 @@ async function requestJson<T>(path: string, init?: RequestInit, retryOn401 = tru
   }
 
   if (!response.ok) {
-    throw new Error(data.detail || `Request failed with status ${response.status}`);
+    const message =
+      data.detail ||
+      formatFieldErrors(data as unknown as Record<string, unknown>) ||
+      (response.status === 401
+        ? "Your session has expired. Please sign in again."
+        : response.status === 403
+          ? "You don't have permission to do that."
+          : response.status === 404
+            ? "That item could not be found."
+            : `Request failed with status ${response.status}`);
+    throw new ApiError(message, response.status, data as unknown as Record<string, unknown>);
   }
 
   return data as T;
@@ -340,6 +433,28 @@ function mapMockupTemplatePart(part: BackendMockupTemplatePart): MockupTemplateP
   };
 }
 
+export function mapProductVariant(variant: BackendProductVariant): ProductVariant {
+  return {
+    id: variant.id,
+    productId: variant.product_id,
+    templateId: variant.template_id,
+    sku: variant.sku,
+    name: variant.name,
+    colorName: variant.color_name,
+    colorHex: variant.color_hex,
+    size: variant.size,
+    price: variant.price,
+    baseCost: variant.base_cost,
+    inventory: variant.inventory,
+    isAvailable: variant.is_available,
+    supportedPrintAreas: variant.supported_print_areas,
+    externalProvider: variant.external_provider,
+    externalVariantId: variant.external_variant_id,
+    image: resolveAssetUrl(variant.image) || null,
+    updatedAt: variant.updated_at,
+  };
+}
+
 function mapMockupTemplate(template: BackendMockupTemplate): MockupTemplate {
   return {
     id: template.id,
@@ -357,7 +472,11 @@ function mapMockupTemplate(template: BackendMockupTemplate): MockupTemplate {
     config: template.config,
     supportedColors: template.supported_colors,
     supportedSizes: template.supported_sizes,
+    canvasWidth: template.canvas_width,
+    canvasHeight: template.canvas_height,
+    supportedFileFormats: template.supported_file_formats,
     parts: (template.parts || []).map(mapMockupTemplatePart),
+    variants: (template.variants || []).map(mapProductVariant),
     updatedAt: template.updated_at,
   };
 }
@@ -481,6 +600,15 @@ export async function getMockupTemplates(productType?: string) {
   return templates.map(mapMockupTemplate);
 }
 
+export async function getProductVariants(filter: { productId?: number; templateId?: number } = {}) {
+  const params = new URLSearchParams();
+  if (filter.productId !== undefined) params.set("product_id", String(filter.productId));
+  if (filter.templateId !== undefined) params.set("template_id", String(filter.templateId));
+  const search = params.toString() ? `?${params.toString()}` : "";
+  const variants = await fetchJson<BackendProductVariant[]>(`/generator/product-variants/${search}`);
+  return variants.map(mapProductVariant);
+}
+
 export async function createMockupRender(input: {
   generatedImageId?: number;
   artworkId?: number;
@@ -565,4 +693,304 @@ export async function loginWithGoogleBackend(idToken: string) {
     method: "POST",
     body: JSON.stringify({ id_token: idToken }),
   });
+}
+
+// --- Saved design projects ---
+
+interface BackendDesignPlacement {
+  id: number;
+  part_name: string;
+  template_part_id: number | null;
+  source_artwork_id: number | null;
+  source_generated_image_id: number | null;
+  source_image_url: string;
+  source_prompt: string;
+  placement_override: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    rotation: number;
+    opacity: number;
+    corner_radius: number;
+    fit: string;
+  };
+  crop_override: { left: number; top: number; width: number; height: number };
+  text_elements: Array<Record<string, unknown>>;
+  preview_render_id: number | null;
+  preview_url: string;
+  print_file_url: string;
+  metadata: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+interface BackendDesignProjectProductSummary {
+  id: number;
+  name: string;
+  slug: string;
+  mockup_template: number | null;
+}
+
+interface BackendDesignProjectTemplateSummary {
+  id: number;
+  name: string;
+  product_type: string;
+}
+
+interface BackendDesignProjectSummary {
+  id: number;
+  name: string;
+  status: DesignProjectStatus;
+  product: BackendDesignProjectProductSummary | null;
+  template: BackendDesignProjectTemplateSummary;
+  selected_variant: BackendProductVariant | null;
+  selected_color: string;
+  selected_size: string;
+  thumbnail_url: string | null;
+  placement_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+interface BackendDesignProject {
+  id: number;
+  name: string;
+  status: DesignProjectStatus;
+  product: BackendDesignProjectProductSummary | null;
+  mockup_template: BackendMockupTemplate;
+  selected_variant: BackendProductVariant | null;
+  selected_color: string;
+  selected_size: string;
+  source_artwork_id: number | null;
+  source_generated_image_id: number | null;
+  source_image_url: string;
+  source_prompt: string;
+  thumbnail: string | null;
+  thumbnail_url: string | null;
+  metadata: Record<string, unknown>;
+  placements: BackendDesignPlacement[];
+  created_at: string;
+  updated_at: string;
+}
+
+function mapDesignPlacement(placement: BackendDesignPlacement): DesignPlacement {
+  return {
+    id: placement.id,
+    partName: placement.part_name,
+    templatePartId: placement.template_part_id,
+    sourceArtworkId: placement.source_artwork_id,
+    sourceGeneratedImageId: placement.source_generated_image_id,
+    sourceImageUrl: placement.source_image_url,
+    sourcePrompt: placement.source_prompt,
+    placementOverride: {
+      x: placement.placement_override.x,
+      y: placement.placement_override.y,
+      width: placement.placement_override.width,
+      height: placement.placement_override.height,
+      rotation: placement.placement_override.rotation,
+      opacity: placement.placement_override.opacity,
+      cornerRadius: placement.placement_override.corner_radius,
+      fit: placement.placement_override.fit,
+    },
+    cropOverride: {
+      left: placement.crop_override.left,
+      top: placement.crop_override.top,
+      width: placement.crop_override.width,
+      height: placement.crop_override.height,
+    },
+    textElements: (placement.text_elements || []).map((element) => ({
+      id: String(element.id ?? `text-${Math.random().toString(36).slice(2)}`),
+      text: String(element.text ?? ""),
+      fontFamily: String(element.fontFamily ?? "Roboto"),
+      color: String(element.color ?? "#ffffff"),
+      fontSize: Number(element.fontSize ?? 48),
+      x: Number(element.x ?? 0),
+      y: Number(element.y ?? 0),
+      rotation: Number(element.rotation ?? 0),
+      isBold: Boolean(element.isBold),
+      isItalic: Boolean(element.isItalic),
+      letterSpacing: element.letterSpacing !== undefined ? Number(element.letterSpacing) : undefined,
+    })),
+    previewRenderId: placement.preview_render_id,
+    previewUrl: resolveAssetUrl(placement.preview_url) || placement.preview_url,
+    printFileUrl: placement.print_file_url,
+    metadata: placement.metadata,
+  };
+}
+
+function mapDesignProjectProductSummary(
+  product: BackendDesignProjectProductSummary | null,
+): DesignProjectProductSummary | null {
+  if (!product) return null;
+  return { id: product.id, name: product.name, slug: product.slug, mockupTemplate: product.mockup_template };
+}
+
+function mapDesignProjectSummary(project: BackendDesignProjectSummary): DesignProjectSummary {
+  return {
+    id: project.id,
+    name: project.name,
+    status: project.status,
+    product: mapDesignProjectProductSummary(project.product),
+    template: {
+      id: project.template.id,
+      name: project.template.name,
+      productType: project.template.product_type,
+    },
+    selectedVariant: project.selected_variant ? mapProductVariant(project.selected_variant) : null,
+    selectedColor: project.selected_color,
+    selectedSize: project.selected_size,
+    thumbnailUrl: project.thumbnail_url ? resolveAssetUrl(project.thumbnail_url) : null,
+    placementCount: project.placement_count,
+    createdAt: project.created_at,
+    updatedAt: project.updated_at,
+  };
+}
+
+function mapDesignProject(project: BackendDesignProject): DesignProject {
+  return {
+    id: project.id,
+    name: project.name,
+    status: project.status,
+    product: mapDesignProjectProductSummary(project.product),
+    mockupTemplate: mapMockupTemplate(project.mockup_template),
+    selectedVariant: project.selected_variant ? mapProductVariant(project.selected_variant) : null,
+    selectedColor: project.selected_color,
+    selectedSize: project.selected_size,
+    sourceArtworkId: project.source_artwork_id,
+    sourceGeneratedImageId: project.source_generated_image_id,
+    sourceImageUrl: project.source_image_url,
+    sourcePrompt: project.source_prompt,
+    thumbnail: project.thumbnail ? resolveAssetUrl(project.thumbnail) : null,
+    thumbnailUrl: project.thumbnail_url ? resolveAssetUrl(project.thumbnail_url) : null,
+    metadata: project.metadata,
+    placements: (project.placements || []).map(mapDesignPlacement),
+    createdAt: project.created_at,
+    updatedAt: project.updated_at,
+  };
+}
+
+function mapPlacementToBackendPayload(placement: DesignPlacement) {
+  return {
+    part_name: placement.partName,
+    source_artwork_id: placement.sourceArtworkId ?? null,
+    source_generated_image_id: placement.sourceGeneratedImageId ?? null,
+    source_image_url: placement.sourceImageUrl ?? "",
+    source_prompt: placement.sourcePrompt ?? "",
+    placement_override: {
+      x: placement.placementOverride?.x ?? 0,
+      y: placement.placementOverride?.y ?? 0,
+      width: placement.placementOverride?.width ?? 0,
+      height: placement.placementOverride?.height ?? 0,
+      rotation: placement.placementOverride?.rotation ?? 0,
+      opacity: placement.placementOverride?.opacity ?? 1,
+      corner_radius: placement.placementOverride?.cornerRadius ?? 0,
+      fit: placement.placementOverride?.fit ?? "contain",
+    },
+    crop_override: {
+      left: placement.cropOverride?.left ?? 0,
+      top: placement.cropOverride?.top ?? 0,
+      width: placement.cropOverride?.width ?? 100,
+      height: placement.cropOverride?.height ?? 100,
+    },
+    text_elements: placement.textElements ?? [],
+    preview_render_id: placement.previewRenderId ?? null,
+    preview_url: placement.previewUrl ?? "",
+    print_file_url: placement.printFileUrl ?? "",
+    metadata: placement.metadata ?? {},
+  };
+}
+
+export interface DesignProjectWriteInput {
+  name?: string;
+  productId?: number | null;
+  mockupTemplateId?: number;
+  selectedVariantId?: number | null;
+  selectedColor?: string;
+  selectedSize?: string;
+  sourceArtworkId?: number | null;
+  sourceGeneratedImageId?: number | null;
+  sourceImageUrl?: string;
+  sourcePrompt?: string;
+  thumbnailUrl?: string;
+  metadata?: Record<string, unknown>;
+  placements?: DesignPlacement[];
+}
+
+function mapDesignProjectWriteInputToBackendPayload(input: DesignProjectWriteInput): Record<string, unknown> {
+  // Only include a key when the caller actually supplied it, so a partial (PATCH) update
+  // doesn't accidentally overwrite fields the caller didn't mean to touch — the backend
+  // distinguishes "key absent" (leave alone) from "key present" (apply), see
+  // DesignProjectWriteSerializer.validate() on the backend.
+  const payload: Record<string, unknown> = {};
+  if (input.name !== undefined) payload.name = input.name;
+  if (input.productId !== undefined) payload.product_id = input.productId;
+  if (input.mockupTemplateId !== undefined) payload.mockup_template_id = input.mockupTemplateId;
+  if (input.selectedVariantId !== undefined) payload.selected_variant_id = input.selectedVariantId;
+  if (input.selectedColor !== undefined) payload.selected_color = input.selectedColor;
+  if (input.selectedSize !== undefined) payload.selected_size = input.selectedSize;
+  if (input.sourceArtworkId !== undefined) payload.source_artwork_id = input.sourceArtworkId;
+  if (input.sourceGeneratedImageId !== undefined) payload.source_generated_image_id = input.sourceGeneratedImageId;
+  if (input.sourceImageUrl !== undefined) payload.source_image_url = input.sourceImageUrl;
+  if (input.sourcePrompt !== undefined) payload.source_prompt = input.sourcePrompt;
+  if (input.thumbnailUrl !== undefined) payload.thumbnail_url = input.thumbnailUrl;
+  if (input.metadata !== undefined) payload.metadata = input.metadata;
+  if (input.placements !== undefined) payload.placements = input.placements.map(mapPlacementToBackendPayload);
+  return payload;
+}
+
+export interface DesignProjectListParams {
+  status?: DesignProjectStatus;
+  search?: string;
+  product?: number;
+  template?: number;
+  ordering?: "updated_at" | "-updated_at" | "created_at" | "-created_at" | "name" | "-name";
+}
+
+export async function listDesignProjects(params: DesignProjectListParams = {}) {
+  const search = new URLSearchParams();
+  if (params.status) search.set("status", params.status);
+  if (params.search) search.set("search", params.search);
+  if (params.product !== undefined) search.set("product", String(params.product));
+  if (params.template !== undefined) search.set("template", String(params.template));
+  if (params.ordering) search.set("ordering", params.ordering);
+  const query = search.toString() ? `?${search.toString()}` : "";
+  const projects = await fetchJson<BackendDesignProjectSummary[]>(`/generator/design-projects/${query}`);
+  return projects.map(mapDesignProjectSummary);
+}
+
+export async function getDesignProject(id: number) {
+  const project = await fetchJson<BackendDesignProject>(`/generator/design-projects/${id}/`);
+  return mapDesignProject(project);
+}
+
+export async function createDesignProject(input: DesignProjectWriteInput) {
+  const project = await sendJson<BackendDesignProject>("/generator/design-projects/", {
+    method: "POST",
+    body: JSON.stringify(mapDesignProjectWriteInputToBackendPayload(input)),
+  });
+  return mapDesignProject(project);
+}
+
+export async function updateDesignProject(
+  id: number,
+  input: DesignProjectWriteInput,
+  options: { method?: "PATCH" | "PUT" } = {},
+) {
+  const project = await sendJson<BackendDesignProject>(`/generator/design-projects/${id}/`, {
+    method: options.method ?? "PATCH",
+    body: JSON.stringify(mapDesignProjectWriteInputToBackendPayload(input)),
+  });
+  return mapDesignProject(project);
+}
+
+export async function deleteDesignProject(id: number) {
+  await requestJson<Record<string, never>>(`/generator/design-projects/${id}/`, { method: "DELETE" });
+}
+
+export async function duplicateDesignProject(id: number) {
+  const project = await sendJson<BackendDesignProject>(`/generator/design-projects/${id}/duplicate/`, {
+    method: "POST",
+  });
+  return mapDesignProject(project);
 }
