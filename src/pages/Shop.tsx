@@ -479,6 +479,7 @@ export function Shop() {
       templateMaskImageUrl: selectedTemplate.maskImage,
       templateShadowLayerUrl: selectedTemplate.shadowLayer,
       templateHighlightLayerUrl: selectedTemplate.highlightLayer,
+      templateParts: selectedTemplate.parts,
       basePrice: Number(selectedTemplate.config.base_price ?? meta.basePrice),
       sizes:
         selectedTemplate.supportedSizes.length > 0

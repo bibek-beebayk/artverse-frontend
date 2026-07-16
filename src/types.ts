@@ -99,6 +99,17 @@ export interface TextElement {
   letterSpacing?: number;
 }
 
+export interface PartCustomization {
+  sourceArtworkId?: number;
+  imageUrl?: string;
+  userPrompt?: string;
+  placementOverride?: PlacementOverride;
+  cropOverride?: CropOverride;
+  textElements?: TextElement[];
+  mockupImageUrl?: string;
+  backendRenderId?: number;
+}
+
 export interface ActiveCustomization {
   artworkId: string;
   sourceArtworkId?: number;
@@ -112,11 +123,13 @@ export interface ActiveCustomization {
   templateMaskImageUrl?: string | null;
   templateShadowLayerUrl?: string | null;
   templateHighlightLayerUrl?: string | null;
+  templateParts?: MockupTemplatePart[];
   basePrice: number;
   sizes: string[];
   colours: string[];
   basePlacement: PlacementOverride | null;
   textElements?: TextElement[];
+  partsConfig?: Record<string, PartCustomization>;
 }
 
 export interface GeneratedArtwork {
@@ -127,6 +140,16 @@ export interface GeneratedArtwork {
   createdAt: string;
   categorySuggestion: string;
   availableProducts: AvailableMockupProduct[];
+}
+
+export interface MockupTemplatePart {
+  id: number;
+  name: string;
+  baseImage: string | null;
+  maskImage: string | null;
+  shadowLayer: string | null;
+  highlightLayer: string | null;
+  config: Record<string, unknown>;
 }
 
 export interface MockupTemplate {
@@ -145,6 +168,7 @@ export interface MockupTemplate {
   config: Record<string, unknown>;
   supportedColors: string[];
   supportedSizes: string[];
+  parts?: MockupTemplatePart[];
   updatedAt: string;
 }
 
@@ -191,4 +215,5 @@ export interface CartItem {
   printProviderVariantId?: string;
   userPrompt?: string;
   originalImageUrl?: string;
+  partsConfig?: Record<string, PartCustomization>;
 }

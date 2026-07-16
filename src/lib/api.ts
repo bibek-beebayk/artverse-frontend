@@ -1,4 +1,4 @@
-import type { Artwork, CollectionSummary, CropOverride, MockupRender, MockupTemplate, PlacementOverride, Product, TextElement, VideoClip } from "../types.ts";
+import type { Artwork, CollectionSummary, CropOverride, MockupRender, MockupTemplate, MockupTemplatePart, PlacementOverride, Product, TextElement, VideoClip } from "../types.ts";
 
 interface BackendCategory {
   id: number;
@@ -50,6 +50,17 @@ interface BackendProduct {
   is_active: boolean;
 }
 
+interface BackendMockupTemplatePart {
+  id: number;
+  name: string;
+  base_image: string | null;
+  mask_image: string | null;
+  displacement_map: string | null;
+  shadow_layer: string | null;
+  highlight_layer: string | null;
+  config: Record<string, unknown>;
+}
+
 interface BackendMockupTemplate {
   id: number;
   name: string;
@@ -66,6 +77,7 @@ interface BackendMockupTemplate {
   config: Record<string, unknown>;
   supported_colors: string[];
   supported_sizes: string[];
+  parts?: BackendMockupTemplatePart[];
   updated_at: string;
 }
 
@@ -316,6 +328,18 @@ function mapProduct(product: BackendProduct): Product {
   };
 }
 
+function mapMockupTemplatePart(part: BackendMockupTemplatePart): MockupTemplatePart {
+  return {
+    id: part.id,
+    name: part.name,
+    baseImage: resolveAssetUrl(part.base_image),
+    maskImage: resolveAssetUrl(part.mask_image),
+    shadowLayer: resolveAssetUrl(part.shadow_layer),
+    highlightLayer: resolveAssetUrl(part.highlight_layer),
+    config: part.config,
+  };
+}
+
 function mapMockupTemplate(template: BackendMockupTemplate): MockupTemplate {
   return {
     id: template.id,
@@ -333,6 +357,7 @@ function mapMockupTemplate(template: BackendMockupTemplate): MockupTemplate {
     config: template.config,
     supportedColors: template.supported_colors,
     supportedSizes: template.supported_sizes,
+    parts: (template.parts || []).map(mapMockupTemplatePart),
     updatedAt: template.updated_at,
   };
 }
@@ -467,6 +492,7 @@ export async function createMockupRender(input: {
   placementOverride?: PlacementOverride;
   cropOverride?: CropOverride;
   textElements?: TextElement[];
+  partName?: string;
 }) {
   const placementOverride = input.placementOverride
     ? {
@@ -494,6 +520,7 @@ export async function createMockupRender(input: {
       template_id: input.templateId,
       variant_color: input.variantColor,
       variant_size: input.variantSize,
+      part_name: input.partName,
       placement_override: placementOverride,
       crop_override: input.cropOverride
         ? {

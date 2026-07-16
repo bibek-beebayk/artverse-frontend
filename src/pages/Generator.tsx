@@ -688,6 +688,7 @@ export function Generator() {
                               templateMaskImageUrl: matchedTemplate?.maskImage,
                               templateShadowLayerUrl: matchedTemplate?.shadowLayer,
                               templateHighlightLayerUrl: matchedTemplate?.highlightLayer,
+                              templateParts: matchedTemplate?.parts,
                               basePrice: product.basePrice,
                               sizes: [...product.sizes],
                               colours: [...product.colours],

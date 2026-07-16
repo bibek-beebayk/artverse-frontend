@@ -19,8 +19,9 @@ import {
 } from 'lucide-react';
 import { cn } from '../lib/utils.ts';
 import { ImageModal } from '../components/Common.tsx';
+import { TShirtTemplate } from '../components/TShirtTemplate.tsx';
 import { createMockupRender } from '../lib/api.ts';
-import type { ActiveCustomization, CropOverride, PlacementOverride, TextElement } from '../types.ts';
+import type { ActiveCustomization, CropOverride, PartCustomization, PlacementOverride, TextElement } from '../types.ts';
 
 const MIN_CROP_SIZE = 12;
 const CROP_HANDLE_SIZE = 18;
@@ -78,6 +79,14 @@ function normalizePlacement(placement: ActiveCustomization['basePlacement']): Pl
   };
 }
 
+function extractPlacementFromConfig(config: Record<string, unknown> | undefined | null): PlacementOverride | null {
+  const placement = (config as { placement?: unknown } | null | undefined)?.placement;
+  if (!placement || typeof placement !== 'object') {
+    return null;
+  }
+  return normalizePlacement(placement as ActiveCustomization['basePlacement']);
+}
+
 export function Customization() {
   const { activeCustomization, addToCart, setActiveCustomization } = useCart();
   const navigate = useNavigate();
@@ -95,11 +104,15 @@ export function Customization() {
     };
   }, [activeCustomization, routeCustomization]);
 
+  const [activePart, setActivePart] = useState<string>('front');
+  const [partsConfig, setPartsConfig] = useState<Record<string, PartCustomization>>({});
   const [selectedColour, setSelectedColour] = useState<string>('');
   const [selectedSize, setSelectedSize] = useState<string>('');
   const [quantity, setQuantity] = useState<number>(1);
   const [isAdding, setIsAdding] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
+  const [isRealisticPreviewOpen, setIsRealisticPreviewOpen] = useState(false);
+  const [realisticPreviewUrl, setRealisticPreviewUrl] = useState<string | null>(null);
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
   const [previewRenderId, setPreviewRenderId] = useState<number | undefined>(undefined);
   const [previewLoading, setPreviewLoading] = useState(false);
@@ -209,8 +222,17 @@ export function Customization() {
       setTextElements(customization.textElements || []);
       setActiveTextId(null);
       setActiveTab('design');
+      setPartsConfig(customization.partsConfig ? { ...customization.partsConfig } : {});
+      setActivePart('front');
     }
   }, [customization]);
+
+  const activeTemplatePart = useMemo(() => {
+    if (!customization?.templateParts) {
+      return null;
+    }
+    return customization.templateParts.find((part) => part.name === activePart) ?? null;
+  }, [customization, activePart]);
 
   const previewResolvedPlacement = useMemo(() => {
     if (!customization?.basePlacement) {
@@ -503,6 +525,49 @@ export function Customization() {
     }
   };
 
+  const getDefaultPlacementForPart = (partName: string): PlacementOverride | null => {
+    const templatePart = customization?.templateParts?.find((part) => part.name === partName);
+    return extractPlacementFromConfig(templatePart?.config) ?? customization?.basePlacement ?? null;
+  };
+
+  const handlePartChange = (nextPart: string) => {
+    if (nextPart === activePart) {
+      return;
+    }
+
+    const outgoingPartState: PartCustomization = {
+      ...partsConfig[activePart],
+      placementOverride: previewResolvedPlacement ?? undefined,
+      cropOverride: appliedCropOverride ?? undefined,
+      textElements,
+    };
+
+    const nextPartsConfig = { ...partsConfig, [activePart]: outgoingPartState };
+    setPartsConfig(nextPartsConfig);
+
+    const savedPart = nextPartsConfig[nextPart];
+    const nextPlacement = savedPart?.placementOverride ?? getDefaultPlacementForPart(nextPart);
+
+    setPlacementDraft(
+      nextPlacement
+        ? {
+            x: nextPlacement.x,
+            y: nextPlacement.y,
+            width: nextPlacement.width,
+            height: nextPlacement.height,
+          }
+        : null
+    );
+    setCornerRadius(nextPlacement?.cornerRadius ?? 0);
+    setAppliedCropOverride(savedPart?.cropOverride ?? null);
+    setDraftCropRect(savedPart?.cropOverride ?? { left: 0, top: 0, width: 100, height: 100 });
+    setTextElements(savedPart?.textElements ?? []);
+    setActiveTextId(null);
+    setTemplateDimensions(null);
+    setIsPreviewAssetLoading(true);
+    setActivePart(nextPart);
+  };
+
   const handleTextPointerDown = (event: React.PointerEvent<HTMLElement>, textId: string) => {
     event.preventDefault();
     event.stopPropagation();
@@ -574,7 +639,10 @@ export function Customization() {
 
   // Render product preview configuration based on choices
   const totalPrice = (customization.basePrice * quantity).toFixed(2);
-  const previewTemplateUrl = customization.templateBaseImageUrl || customization.mockupImageUrl;
+  const previewTemplateUrl =
+    activeTemplatePart?.baseImage || customization.templateBaseImageUrl || customization.mockupImageUrl;
+  const previewShadowLayerUrl = activeTemplatePart?.shadowLayer || customization.templateShadowLayerUrl;
+  const previewHighlightLayerUrl = activeTemplatePart?.highlightLayer || customization.templateHighlightLayerUrl;
   const supportsLiveTemplatePreview = Boolean(previewTemplateUrl && previewResolvedPlacement);
   const showPreviewLoading = previewLoading || isPreviewAssetLoading;
 
@@ -642,6 +710,12 @@ export function Customization() {
       )
     );
 
+    if (customization.productType === 'tshirt' && !previewTemplateUrl) {
+      setTemplateDimensions({ width: 1000, height: 1000 });
+      setIsPreviewAssetLoading(false);
+      return;
+    }
+
     if (assetUrls.length === 0) {
       setIsPreviewAssetLoading(false);
       return;
@@ -706,6 +780,32 @@ export function Customization() {
     };
   }, [customization, previewTemplateUrl]);
 
+  
+  const handleGenerateRealisticPreview = async () => {
+    setIsPreviewAssetLoading(true);
+    try {
+      const response = await createMockupRender({
+        templateId: customization.templateId,
+        artworkId: customization.sourceArtworkId,
+        sourceImageUrl: customization.imageUrl,
+        sourcePrompt: customization.userPrompt,
+        variantColor: selectedColour,
+        variantSize: selectedSize,
+        placementOverride: previewResolvedPlacement ?? undefined,
+        cropOverride: appliedCropOverride,
+        textElements,
+        partName: activePart,
+      });
+      setRealisticPreviewUrl(response.render.outputImage || response.render.outputImageUrl || customization.mockupImageUrl);
+      setIsRealisticPreviewOpen(true);
+    } catch (error) {
+      console.error('Failed to generate preview:', error);
+      alert('Failed to generate realistic preview.');
+    } finally {
+      setIsPreviewAssetLoading(false);
+    }
+  };
+
   const handleConfirmAddToCart = async () => {
     setIsAdding(true);
     setPreviewLoading(true);
@@ -725,12 +825,26 @@ export function Customization() {
         placementOverride: previewResolvedPlacement ?? undefined,
         cropOverride,
         textElements,
+        partName: activePart,
       });
 
       finalizedMockupUrl =
         response.render.outputImage || response.render.outputImageUrl || customization.mockupImageUrl;
       finalizedRenderId = response.render.id;
       setPreviewRenderId(response.render.id);
+
+      const finalPartsConfig: Record<string, PartCustomization> = {
+        ...partsConfig,
+        [activePart]: {
+          ...partsConfig[activePart],
+          placementOverride: previewResolvedPlacement ?? undefined,
+          cropOverride: cropOverride ?? undefined,
+          textElements,
+          mockupImageUrl: finalizedMockupUrl,
+          backendRenderId: finalizedRenderId,
+        },
+      };
+      setPartsConfig(finalPartsConfig);
 
       const cartItemId = `cart-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
       addToCart({
@@ -749,7 +863,8 @@ export function Customization() {
         cropOverride,
         textElements,
         userPrompt: customization.userPrompt,
-        originalImageUrl: customization.imageUrl
+        originalImageUrl: customization.imageUrl,
+        partsConfig: finalPartsConfig,
       });
 
       setIsSuccess(true);
@@ -792,7 +907,29 @@ export function Customization() {
             </p>
           </div>
 
+          
+          {customization.productType === 'tshirt' && (
+            <div className="flex gap-4 border-b border-white/10 mb-4 px-2">
+              {(customization.templateParts && customization.templateParts.length > 0
+                ? customization.templateParts.map((part) => part.name)
+                : ['front', 'back', 'left_sleeve', 'right_sleeve']
+              ).map(part => (
+                <button
+                  key={part}
+                  onClick={() => handlePartChange(part)}
+                  className={cn(
+                    "pb-2 text-xs uppercase tracking-widest border-b-2 transition-colors",
+                    activePart === part ? "border-neon-blue text-neon-blue" : "border-transparent text-gray-500 hover:text-white"
+                  )}
+                >
+                  {part.replace('_', ' ')}
+                </button>
+              ))}
+            </div>
+          )}
+          
           <div className="relative min-h-[420px] sm:min-h-[560px] xl:min-h-[760px] rounded-3xl bg-cyber-gray/30 border border-white/5 flex items-center justify-center overflow-hidden p-3 sm:p-6 xl:p-8 group shadow-[0_0_50px_rgba(0,0,0,0.8)]">
+
             <div className="absolute inset-0 bg-gradient-to-tr from-cyber-black/80 to-white/5 pointer-events-none" />
             
             {/* Dynamic Product Renderings with user image nested */}
@@ -855,30 +992,35 @@ export function Customization() {
                       handleTextPointerEnd(e);
                     }}
                   >
-                    <img
-                      src={previewTemplateUrl}
-                      alt={customization.templateName || customization.productType}
-                      className="absolute inset-0 w-full h-full object-contain pointer-events-none"
-                      onLoad={(event) => {
-                        setIsPreviewAssetLoading(false);
-                        const { naturalWidth, naturalHeight } = event.currentTarget;
-                        if (naturalWidth > 0 && naturalHeight > 0) {
-                          setTemplateDimensions((current) => {
-                            if (
-                              current?.width === naturalWidth &&
-                              current?.height === naturalHeight
-                            ) {
-                              return current;
-                            }
+                    
+                    {customization.productType === 'tshirt' && !previewTemplateUrl ? (
+                      <TShirtTemplate activePart={activePart} className="absolute inset-0 w-full h-full pointer-events-none" />
+                    ) : (
+                      <img
+                        src={previewTemplateUrl}
+                        alt={customization.templateName || customization.productType}
+                        className="absolute inset-0 w-full h-full object-contain pointer-events-none"
+                        onLoad={(event) => {
+                          setIsPreviewAssetLoading(false);
+                          const { naturalWidth, naturalHeight } = event.currentTarget;
+                          if (naturalWidth > 0 && naturalHeight > 0) {
+                            setTemplateDimensions((current) => {
+                              if (
+                                current?.width === naturalWidth &&
+                                current?.height === naturalHeight
+                              ) {
+                                return current;
+                              }
+                              return { width: naturalWidth, height: naturalHeight };
+                            });
+                          }
+                        }}
+                        onError={() => {
+                          setIsPreviewAssetLoading(false);
+                        }}
+                      />
+                    )}
 
-                            return { width: naturalWidth, height: naturalHeight };
-                          });
-                        }
-                      }}
-                      onError={() => {
-                        setIsPreviewAssetLoading(false);
-                      }}
-                    />
 
                     {previewPlacementStyle && (
                       <div
@@ -937,18 +1079,18 @@ export function Customization() {
                       </div>
                     )}
 
-                    {customization.templateShadowLayerUrl && (
+                    {previewShadowLayerUrl && (
                       <img
-                        src={customization.templateShadowLayerUrl}
+                        src={previewShadowLayerUrl}
                         alt=""
                         className="absolute inset-0 w-full h-full object-contain pointer-events-none"
                         aria-hidden="true"
                       />
                     )}
 
-                    {customization.templateHighlightLayerUrl && (
+                    {previewHighlightLayerUrl && (
                       <img
-                        src={customization.templateHighlightLayerUrl}
+                        src={previewHighlightLayerUrl}
                         alt=""
                         className="absolute inset-0 w-full h-full object-contain pointer-events-none"
                         aria-hidden="true"
@@ -1569,6 +1711,20 @@ export function Customization() {
               </div>
             </div>
 
+            
+            <button
+              onClick={handleGenerateRealisticPreview}
+              disabled={showPreviewLoading}
+              className={cn(
+                "w-full flex items-center justify-center gap-3 px-8 py-4 mb-4 rounded-full font-bold uppercase tracking-widest text-xs transition-all duration-300 border-2",
+                showPreviewLoading 
+                  ? "border-cyber-gray text-gray-500 cursor-not-allowed" 
+                  : "border-neon-pink text-neon-pink hover:bg-neon-pink/10 hover:shadow-neon-pink"
+              )}
+            >
+              <Maximize2 size={16} />
+              Generate Realistic Preview
+            </button>
             <button
               onClick={handleConfirmAddToCart}
               disabled={isAdding || isSuccess}
@@ -1834,6 +1990,12 @@ export function Customization() {
         imageUrl={customization.imageUrl}
         title={`Vision: ${customization.userPrompt}`}
         artworkId={customization.artworkId || undefined}
+      />
+      <ImageModal
+        isOpen={isRealisticPreviewOpen}
+        onClose={() => setIsRealisticPreviewOpen(false)}
+        imageUrl={realisticPreviewUrl || ''}
+        title={`Realistic Preview of ${activePart}`}
       />
     </div>
   );
