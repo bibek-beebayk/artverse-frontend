@@ -54,6 +54,12 @@ export interface Product {
   imageUrl: string;
   thumbnailUrl?: string;
   description?: string;
+  /** The generator.MockupTemplate this storefront product renders through, if it's
+   * customizable at all — null/undefined for a plain static listing. */
+  mockupTemplateId?: number | null;
+  variants?: ProductVariant[];
+  availableSizes?: string[];
+  availableColors?: string[];
 }
 
 export interface AvailableMockupProduct {
@@ -109,6 +115,11 @@ export interface PartCustomization {
   textElements?: TextElement[];
   mockupImageUrl?: string;
   backendRenderId?: number;
+  /** True when this part's printable properties (artwork/text/placement/crop/etc.) have
+   * changed since its last successful render — used to skip re-rendering unchanged parts
+   * before checkout. False/undefined means the existing mockupImageUrl/backendRenderId (if
+   * any) are still valid. */
+  isDirty?: boolean;
 }
 
 export interface ActiveCustomization {
@@ -177,7 +188,9 @@ export interface MockupTemplate {
   canvasHeight?: number | null;
   supportedFileFormats?: string[];
   parts?: MockupTemplatePart[];
-  variants?: ProductVariant[];
+  // Deliberately no `variants` here — the backend no longer embeds every variant on the
+  // template (payload-size fix). Fetch variants for a specific product/template via
+  // getProductVariants({ productId, templateId }) instead.
   updatedAt: string;
 }
 
@@ -293,6 +306,10 @@ export interface DesignProjectSummary {
   selectedColor: string;
   selectedSize: string;
   thumbnailUrl: string | null;
+  /** The one authoritative thumbnail to render — already resolved server-side through the full
+   * fallback chain (uploaded thumbnail -> thumbnailUrl -> front preview -> any preview ->
+   * template image -> empty). Use this directly; don't re-derive a fallback client-side. */
+  displayThumbnailUrl: string;
   placementCount: number;
   createdAt: string;
   updatedAt: string;

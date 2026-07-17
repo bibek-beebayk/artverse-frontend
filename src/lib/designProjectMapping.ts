@@ -29,7 +29,10 @@ export function mapPartCustomizationToPlacement(partName: string, part: PartCust
   };
 }
 
-/** A DesignPlacement from the backend -> partsConfig[partName] (editor state) shape. */
+/** A DesignPlacement from the backend -> partsConfig[partName] (editor state) shape. A part
+ * reopened from a saved project starts clean (isDirty: false) — if it's actually missing a
+ * render ID or preview URL, partNeedsRender() below still catches that independently of
+ * isDirty, so this doesn't risk skipping a part that genuinely needs rendering. */
 export function mapPlacementToPartCustomization(placement: DesignPlacement): PartCustomization {
   return {
     sourceArtworkId: placement.sourceArtworkId ?? undefined,
@@ -41,6 +44,7 @@ export function mapPlacementToPartCustomization(placement: DesignPlacement): Par
     textElements: placement.textElements,
     mockupImageUrl: placement.previewUrl || undefined,
     backendRenderId: placement.previewRenderId ?? undefined,
+    isDirty: false,
   };
 }
 
@@ -125,4 +129,35 @@ export function isPartConfigured(part: PartCustomization | undefined): boolean {
   return Boolean(
     part.sourceArtworkId || part.sourceGeneratedImageId || part.imageUrl || (part.textElements && part.textElements.length > 0),
   );
+}
+
+/** Should this part be (re)rendered before checkout? A configured part needs rendering when
+ * it's marked dirty, or it's missing a render ID, or it's missing a preview URL — an empty
+ * (unconfigured) part never needs rendering. Reusing a valid existing render for a part that
+ * needs none of the above is what avoids unnecessary re-renders. */
+export function partNeedsRender(part: PartCustomization | undefined): boolean {
+  if (!isPartConfigured(part)) return false;
+  return Boolean(part!.isDirty || !part!.backendRenderId || !part!.mockupImageUrl);
+}
+
+/** Pure merge used by both the interactive editor (via a setPartsConfig-wrapping helper) and
+ * the checkout finalization loop (on a local accumulator) — one place that decides how a part
+ * update affects isDirty, instead of each call site tracking it by hand. Defaults to marking
+ * the part dirty (most callers are printable-property edits); pass `markDirty: false` for
+ * non-printable bookkeeping such as recording a fresh render result. */
+export function withPartUpdate(
+  partsConfig: Record<string, PartCustomization>,
+  partName: string,
+  changes: Partial<PartCustomization>,
+  options?: { markDirty?: boolean },
+): Record<string, PartCustomization> {
+  const existing = partsConfig[partName];
+  return {
+    ...partsConfig,
+    [partName]: {
+      ...existing,
+      ...changes,
+      isDirty: options?.markDirty === false ? (changes.isDirty ?? existing?.isDirty) : true,
+    },
+  };
 }

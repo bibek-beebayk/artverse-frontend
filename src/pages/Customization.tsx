@@ -24,11 +24,13 @@ import {
 import { cn } from '../lib/utils.ts';
 import { ImageModal } from '../components/Common.tsx';
 import { TShirtTemplate } from '../components/TShirtTemplate.tsx';
-import { ApiError, createMockupRender, getDesignProject, createDesignProject, updateDesignProject } from '../lib/api.ts';
+import { ApiError, createMockupRender, getDesignProject, createDesignProject, replaceDesignProject } from '../lib/api.ts';
 import {
   isPartConfigured,
   mapDesignProjectToActiveCustomization,
   mapEditorStateToDesignProjectWriteInput,
+  partNeedsRender,
+  withPartUpdate,
 } from '../lib/designProjectMapping.ts';
 import type { ActiveCustomization, CropOverride, PartCustomization, PlacementOverride, TextElement } from '../types.ts';
 
@@ -203,6 +205,7 @@ export function Customization() {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [finalizationStage, setFinalizationStage] = useState<string | null>(null);
   const skipNextDirtyRef = useRef(false);
+  const skipNextPartDirtyRef = useRef(false);
   const pendingSaveAfterLoginRef = useRef(false);
   const loadedProjectIdRef = useRef<number | undefined>(undefined);
 
@@ -228,6 +231,7 @@ export function Customization() {
           colours: project.mockupTemplate.supportedColors,
         });
         skipNextDirtyRef.current = true;
+        skipNextPartDirtyRef.current = true;
         setActiveCustomization(nextCustomization);
         setCurrentProjectId(project.id);
         setProjectName(project.name);
@@ -256,6 +260,38 @@ export function Customization() {
     }
     setSaveStatus((current) => (current === 'saving' ? current : 'dirty'));
   }, [partsConfig, projectName, selectedColour, selectedSize, textElements, placementDraft, appliedCropOverride, cornerRadius]);
+
+  // Mark only the ACTIVE part dirty when its printable properties change (placement, crop,
+  // text, corner radius — fit/rotation/opacity live inside placementOverride once resolved).
+  // Deliberately narrower than the effect above: project name/colour/size are project-level,
+  // not part-level, and switching tabs or opening/closing a panel must not dirty a part —
+  // handlePartChange sets skipNextPartDirtyRef before restoring the newly-active part's saved
+  // values, so the resulting state change here is swallowed instead of misread as an edit.
+  useEffect(() => {
+    if (skipNextPartDirtyRef.current) {
+      skipNextPartDirtyRef.current = false;
+      return;
+    }
+    setPartsConfig((prev) => {
+      if (prev[activePart]?.isDirty) {
+        return prev;
+      }
+      return { ...prev, [activePart]: { ...prev[activePart], isDirty: true } };
+    });
+  }, [placementDraft, appliedCropOverride, textElements, cornerRadius]);
+
+  // Centralized part-state updater (section 6): route part edits through here instead of
+  // scattering `setPartsConfig` + manual `isDirty` bookkeeping across handlers — this and the
+  // checkout finalization loop both delegate the actual merge/isDirty logic to the same pure
+  // `withPartUpdate` helper, so there's exactly one place that decides how a change affects
+  // dirtiness rather than two copies that could drift.
+  const updatePartCustomization = (
+    partName: string,
+    changes: Partial<PartCustomization>,
+    options?: { markDirty?: boolean }
+  ) => {
+    setPartsConfig((prev) => withPartUpdate(prev, partName, changes, options));
+  };
 
   useEffect(() => {
     if (!activeCustomization && routeCustomization) {
@@ -612,6 +648,11 @@ export function Customization() {
       return;
     }
 
+    // Restoring the incoming part's saved placement/crop/text below will change the same
+    // state the part-dirty effect watches — swallow that one resulting tick so switching tabs
+    // never marks the newly-active part dirty on its own.
+    skipNextPartDirtyRef.current = true;
+
     const outgoingPartState: PartCustomization = {
       ...partsConfig[activePart],
       placementOverride: previewResolvedPlacement ?? undefined,
@@ -873,8 +914,22 @@ export function Customization() {
         textElements,
         partName: activePart,
       });
-      setRealisticPreviewUrl(response.render.outputImage || response.render.outputImageUrl || customization.mockupImageUrl);
+      const renderedUrl = response.render.outputImage || response.render.outputImageUrl || customization.mockupImageUrl;
+      setRealisticPreviewUrl(renderedUrl);
       setIsRealisticPreviewOpen(true);
+      // This was a real render of the active part's current state — record it so a later
+      // Add to Cart doesn't re-render this same part again if nothing changes before then.
+      updatePartCustomization(
+        activePart,
+        {
+          placementOverride: previewResolvedPlacement ?? undefined,
+          cropOverride: appliedCropOverride ?? undefined,
+          textElements,
+          mockupImageUrl: renderedUrl,
+          backendRenderId: response.render.id,
+        },
+        { markDirty: false }
+      );
     } catch (error) {
       console.error('Failed to generate preview:', error);
       alert('Failed to generate realistic preview.');
@@ -911,8 +966,12 @@ export function Customization() {
       partsConfig: partsConfigToSave,
     });
 
+    // The editor always hands this function its COMPLETE current partsConfig (see
+    // captureCurrentPartsConfig), never a partial one — so an existing project is always a
+    // full replace (PUT), not a partial patch. A part the user removed from the editor (e.g.
+    // deleted the sleeve design) must actually disappear from the saved project too.
     if (currentProjectId) {
-      return updateDesignProject(currentProjectId, input, { method: 'PATCH' });
+      return replaceDesignProject(currentProjectId, input);
     }
 
     const created = await createDesignProject(input);
@@ -946,7 +1005,11 @@ export function Customization() {
     try {
       const merged = captureCurrentPartsConfig();
       setPartsConfig(merged);
-      await persistDesignProject(merged);
+      // Explicit return value, not `currentProjectId` state (which wouldn't have committed
+      // yet if this is the first save) — persistDesignProject's resolved value is the single
+      // source of truth for "which project did we just save."
+      const savedProject = await persistDesignProject(merged);
+      void savedProject;
       skipNextDirtyRef.current = true;
       setSaveStatus('saved');
       window.setTimeout(() => {
@@ -982,9 +1045,16 @@ export function Customization() {
 
     try {
       let workingPartsConfig = captureCurrentPartsConfig();
-      const partsNeedingRender = Object.entries(workingPartsConfig).filter(([, part]) => isPartConfigured(part));
+      const configuredParts = Object.entries(workingPartsConfig).filter(([, part]) => isPartConfigured(part));
+      // Only the dirty/incomplete ones actually get re-rendered; parts already clean (a valid
+      // render ID + preview URL, unchanged since) are reused as-is from workingPartsConfig.
+      const partsNeedingRender = configuredParts.filter(([, part]) => partNeedsRender(part));
+      const skippedParts = configuredParts.filter(([, part]) => !partNeedsRender(part)).map(([partName]) => partName);
+      if (skippedParts.length > 0) {
+        console.info(`Reusing existing previews for unchanged part(s): ${skippedParts.join(', ')}`);
+      }
 
-      if (partsNeedingRender.length === 0) {
+      if (configuredParts.length === 0) {
         // Non-part product (mug, poster, etc.), or nothing part-specific configured yet —
         // fall back to the original single-render behavior using the active part directly.
         setFinalizationStage('Preparing your design…');
@@ -1000,17 +1070,18 @@ export function Customization() {
           textElements,
           partName: activePart,
         });
-        workingPartsConfig = {
-          ...workingPartsConfig,
-          [activePart]: {
-            ...workingPartsConfig[activePart],
+        workingPartsConfig = withPartUpdate(
+          workingPartsConfig,
+          activePart,
+          {
             placementOverride: previewResolvedPlacement ?? undefined,
             cropOverride: cropOverride ?? undefined,
             textElements,
             mockupImageUrl: response.render.outputImage || response.render.outputImageUrl || customization.mockupImageUrl,
             backendRenderId: response.render.id,
           },
-        };
+          { markDirty: false }
+        );
       } else {
         for (const [partName, part] of partsNeedingRender) {
           setFinalizationStage(`Preparing ${partName.replace(/_/g, ' ')}…`);
@@ -1026,20 +1097,26 @@ export function Customization() {
             textElements: part.textElements ?? [],
             partName,
           });
-          workingPartsConfig = {
-            ...workingPartsConfig,
-            [partName]: {
-              ...part,
+          workingPartsConfig = withPartUpdate(
+            workingPartsConfig,
+            partName,
+            {
               mockupImageUrl: response.render.outputImage || response.render.outputImageUrl || part.mockupImageUrl,
               backendRenderId: response.render.id,
             },
-          };
+            { markDirty: false }
+          );
         }
       }
 
       setPartsConfig(workingPartsConfig);
 
-      let savedProjectId = currentProjectId;
+      // The cart item's designProjectId always comes from persistDesignProject's resolved
+      // return value below, never from `currentProjectId` state — that state update from a
+      // just-created project wouldn't be guaranteed to have landed yet by the time addToCart
+      // runs a few lines down (setState is async), so reading it here would risk attaching no
+      // ID (or a stale one) to the cart item.
+      let savedProjectId: number | undefined;
       if (user) {
         setFinalizationStage('Saving design…');
         const saved = await persistDesignProject(workingPartsConfig);

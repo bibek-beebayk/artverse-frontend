@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { CheckCircle2, ChevronLeft, ChevronRight, Package2, Palette, RefreshCw, ShoppingBag, Sparkles } from 'lucide-react';
-import type { ActiveCustomization, Artwork, MockupRender, MockupTemplate, PlacementOverride } from '../types.ts';
+import type { ActiveCustomization, Artwork, MockupRender, MockupTemplate, PlacementOverride, Product } from '../types.ts';
 import { SmartImage } from '../components/Common.tsx';
-import { createMockupRender, getArtworks, getMockupTemplates } from '../lib/api.ts';
+import { createMockupRender, getArtworks, getMockupTemplates, getProducts } from '../lib/api.ts';
 import { useCart } from '../context/CartContext.tsx';
 import { cn } from '../lib/utils.ts';
 
@@ -240,6 +240,7 @@ export function Shop() {
   const templateRailRef = useRef<HTMLDivElement | null>(null);
   const designRailRef = useRef<HTMLDivElement | null>(null);
   const [templates, setTemplates] = useState<MockupTemplate[]>([]);
+  const [products, setProducts] = useState<Product[]>([]);
   const [designs, setDesigns] = useState<Artwork[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -258,13 +259,21 @@ export function Shop() {
   useEffect(() => {
     const loadShopBuilder = async () => {
       try {
-        const [loadedTemplates, loadedDesigns] = await Promise.all([
+        const [loadedTemplates, loadedDesigns, loadedProducts] = await Promise.all([
           getMockupTemplates(),
           getArtworks(),
+          getProducts().catch((productsError) => {
+            // Storefront products are supplementary here (only used to attach a real
+            // productId to the customization) — don't fail the whole builder if this call
+            // has an issue, the template-only flow still works.
+            console.error('Failed to load storefront products:', productsError);
+            return [];
+          }),
         ]);
 
         setTemplates(loadedTemplates);
         setDesigns(loadedDesigns);
+        setProducts(loadedProducts);
       } catch (loadError) {
         console.error('Failed to load shop builder data:', loadError);
         setError('The merch builder is currently unavailable.');
@@ -279,6 +288,10 @@ export function Shop() {
   const selectedTemplate =
     templates.find((template) => template.id === selectedTemplateId) ?? null;
   const selectedDesign = designs.find((design) => design.id === selectedDesignId) ?? null;
+  // The storefront product wrapping the selected template, if one exists — carries the real
+  // product_id into the customization instead of inferring it solely from the template.
+  const selectedProduct =
+    products.find((product) => product.mockupTemplateId === selectedTemplate?.id) ?? null;
 
   useEffect(() => {
     if (!selectedTemplate || !selectedDesign) {
@@ -466,6 +479,11 @@ export function Shop() {
     }
 
     const meta = getTemplateMeta(selectedTemplate);
+    // Prefer the storefront product's own variant-derived sizes/colours; fall back to the
+    // template's flat lists (and finally the hardcoded meta defaults) only when the product
+    // has no configured variants yet — see designProjectMapping / TODO.md item 9.
+    const productSizes = selectedProduct?.availableSizes?.filter((size) => size) ?? [];
+    const productColours = selectedProduct?.availableColors?.filter((colour) => colour) ?? [];
     const customization: ActiveCustomization = {
       artworkId: selectedDesign.id,
       sourceArtworkId: selectedDesign.backendArtworkId,
@@ -474,6 +492,7 @@ export function Shop() {
       templateId: selectedTemplate.id,
       templateName: selectedTemplate.name,
       productType: selectedTemplate.productTypeDisplay,
+      productId: selectedProduct ? Number(selectedProduct.id) : undefined,
       mockupImageUrl: selectedTemplate.baseImage || selectedDesign.imageUrl,
       templateBaseImageUrl: selectedTemplate.baseImage,
       templateMaskImageUrl: selectedTemplate.maskImage,
@@ -482,13 +501,17 @@ export function Shop() {
       templateParts: selectedTemplate.parts,
       basePrice: Number(selectedTemplate.config.base_price ?? meta.basePrice),
       sizes:
-        selectedTemplate.supportedSizes.length > 0
-          ? [...selectedTemplate.supportedSizes]
-          : [...meta.fallbackSizes],
+        productSizes.length > 0
+          ? productSizes
+          : selectedTemplate.supportedSizes.length > 0
+            ? [...selectedTemplate.supportedSizes]
+            : [...meta.fallbackSizes],
       colours:
-        selectedTemplate.supportedColors.length > 0
-          ? [...selectedTemplate.supportedColors]
-          : [...meta.fallbackColours],
+        productColours.length > 0
+          ? productColours
+          : selectedTemplate.supportedColors.length > 0
+            ? [...selectedTemplate.supportedColors]
+            : [...meta.fallbackColours],
       basePlacement: (() => {
         const basePlacement = getPlacementFromCandidate(
           (selectedTemplate.config as Record<string, unknown>)?.placement

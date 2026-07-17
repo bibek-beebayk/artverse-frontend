@@ -66,6 +66,10 @@ interface BackendProduct {
   image_url: string;
   inventory: number;
   is_active: boolean;
+  mockup_template_id: number | null;
+  variants: BackendProductVariant[];
+  available_sizes: string[];
+  available_colors: string[];
 }
 
 interface BackendMockupTemplatePart {
@@ -119,7 +123,7 @@ interface BackendMockupTemplate {
   canvas_height: number | null;
   supported_file_formats: string[];
   parts?: BackendMockupTemplatePart[];
-  variants?: BackendProductVariant[];
+  // No `variants` here on purpose — see MockupTemplateSerializer's docstring on the backend.
   updated_at: string;
 }
 
@@ -418,6 +422,10 @@ function mapProduct(product: BackendProduct): Product {
     imageUrl,
     thumbnailUrl,
     description: product.description,
+    mockupTemplateId: product.mockup_template_id,
+    variants: (product.variants || []).map(mapProductVariant),
+    availableSizes: product.available_sizes,
+    availableColors: product.available_colors,
   };
 }
 
@@ -476,7 +484,6 @@ function mapMockupTemplate(template: BackendMockupTemplate): MockupTemplate {
     canvasHeight: template.canvas_height,
     supportedFileFormats: template.supported_file_formats,
     parts: (template.parts || []).map(mapMockupTemplatePart),
-    variants: (template.variants || []).map(mapProductVariant),
     updatedAt: template.updated_at,
   };
 }
@@ -748,6 +755,7 @@ interface BackendDesignProjectSummary {
   selected_color: string;
   selected_size: string;
   thumbnail_url: string | null;
+  display_thumbnail_url: string;
   placement_count: number;
   created_at: string;
   updated_at: string;
@@ -841,6 +849,7 @@ function mapDesignProjectSummary(project: BackendDesignProjectSummary): DesignPr
     selectedColor: project.selected_color,
     selectedSize: project.selected_size,
     thumbnailUrl: project.thumbnail_url ? resolveAssetUrl(project.thumbnail_url) : null,
+    displayThumbnailUrl: project.display_thumbnail_url ? resolveAssetUrl(project.display_thumbnail_url) : '',
     placementCount: project.placement_count,
     createdAt: project.created_at,
     updatedAt: project.updated_at,
@@ -972,13 +981,24 @@ export async function createDesignProject(input: DesignProjectWriteInput) {
   return mapDesignProject(project);
 }
 
-export async function updateDesignProject(
-  id: number,
-  input: DesignProjectWriteInput,
-  options: { method?: "PATCH" | "PUT" } = {},
-) {
+/** Full replace: `input.placements` (and every other field) is treated as the complete,
+ * authoritative state — placements for parts omitted from it are deleted. Use this for the
+ * main "Save Design" action and before adding to cart, where the caller always has the
+ * complete current editor state, never a partial one. */
+export async function replaceDesignProject(id: number, input: DesignProjectWriteInput) {
   const project = await sendJson<BackendDesignProject>(`/generator/design-projects/${id}/`, {
-    method: options.method ?? "PATCH",
+    method: "PUT",
+    body: JSON.stringify(mapDesignProjectWriteInputToBackendPayload(input)),
+  });
+  return mapDesignProject(project);
+}
+
+/** Partial update: only the fields present in `input` are touched; placements are upserted,
+ * never deleted for being omitted. Use this for targeted changes — renaming from Saved
+ * Designs, changing just the status, etc. Never pass a full editor-state snapshot here. */
+export async function patchDesignProject(id: number, input: DesignProjectWriteInput) {
+  const project = await sendJson<BackendDesignProject>(`/generator/design-projects/${id}/`, {
+    method: "PATCH",
     body: JSON.stringify(mapDesignProjectWriteInputToBackendPayload(input)),
   });
   return mapDesignProject(project);

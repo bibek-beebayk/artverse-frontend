@@ -39,6 +39,11 @@ export function Navbar() {
   const [showCollectionsDropdown, setShowCollectionsDropdown] = useState(false);
   const [collections, setCollections] = useState<CollectionSummary[]>([]);
 
+  // Saved Designs is an authenticated-only route (same guard as /generator and /customize) —
+  // only show the link once signed in, rather than showing it and relying solely on the
+  // protected-route gate to turn away a click.
+  const visibleNavLinks = navLinks.filter((link) => link.path !== '/saved-designs' || Boolean(user));
+
   useEffect(() => {
     const handleScroll = () => setScrolled(window.scrollY > 20);
     window.addEventListener('scroll', handleScroll);
@@ -175,7 +180,7 @@ export function Navbar() {
               </AnimatePresence>
             </div>
 
-            {navLinks.slice(1).map((link) => (
+            {visibleNavLinks.slice(1).map((link) => (
               <NavLink
                 key={link.path}
                 to={link.path}
@@ -380,7 +385,7 @@ export function Navbar() {
               </div>
             </div>
 
-            {navLinks.slice(1).map((link) => (
+            {visibleNavLinks.slice(1).map((link) => (
               <NavLink
                 key={link.path}
                 to={link.path}

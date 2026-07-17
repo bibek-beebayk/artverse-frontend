@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { Layers, Trash2, Copy, Pencil, Search, Sparkles, ExternalLink, X, Check } from 'lucide-react';
 import { useAuth } from '../context/AuthContext.tsx';
-import { deleteDesignProject, duplicateDesignProject, listDesignProjects, updateDesignProject } from '../lib/api.ts';
+import { deleteDesignProject, duplicateDesignProject, listDesignProjects, patchDesignProject } from '../lib/api.ts';
 import { cn } from '../lib/utils.ts';
 import type { DesignProjectStatus, DesignProjectSummary } from '../types.ts';
 
@@ -76,7 +76,7 @@ export function SavedDesigns() {
 
     setBusyId(project.id);
     try {
-      const updated = await updateDesignProject(project.id, { name: nextName }, { method: 'PATCH' });
+      const updated = await patchDesignProject(project.id, { name: nextName });
       setProjects((current) => current.map((p) => (p.id === project.id ? { ...p, name: updated.name } : p)));
     } catch (error) {
       alert(error instanceof Error ? error.message : 'Could not rename this design.');
@@ -111,8 +111,6 @@ export function SavedDesigns() {
     }
   };
 
-  const thumbnailFor = (project: DesignProjectSummary) =>
-    project.thumbnailUrl || project.template.productType ? project.thumbnailUrl : null;
 
   const emptyState = useMemo(() => {
     if (search.trim() || statusFilter !== 'all') {
@@ -217,18 +215,21 @@ export function SavedDesigns() {
                 className="glass-card group relative flex flex-col overflow-hidden border-white/10 transition-all hover:border-neon-blue/40"
               >
                 <div className="relative h-48 w-full overflow-hidden bg-cyber-gray/40">
-                  {thumbnailFor(project) ? (
-                    <img
-                      src={thumbnailFor(project) || ''}
-                      alt={project.name}
-                      className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
-                      loading="lazy"
-                    />
-                  ) : (
-                    <div className="flex h-full w-full items-center justify-center text-gray-600">
-                      <Layers size={40} />
-                    </div>
-                  )}
+                  {(() => {
+                    const thumbnailUrl = project.displayThumbnailUrl;
+                    return thumbnailUrl ? (
+                      <img
+                        src={thumbnailUrl}
+                        alt={project.name}
+                        className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
+                        loading="lazy"
+                      />
+                    ) : (
+                      <div className="flex h-full w-full items-center justify-center text-gray-600">
+                        <Layers size={40} />
+                      </div>
+                    );
+                  })()}
                   <span
                     className={cn(
                       'absolute left-3 top-3 rounded-full px-2.5 py-1 text-[8px] font-black uppercase tracking-widest',

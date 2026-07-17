@@ -1,14 +1,14 @@
 import { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Sparkles, Download, Save, RefreshCw, Cpu, Zap, ShieldCheck } from 'lucide-react';
-import type { ActiveCustomization, MockupRender, MockupTemplate, PlacementOverride } from '../types.ts';
+import type { ActiveCustomization, MockupRender, MockupTemplate, PlacementOverride, Product } from '../types.ts';
 import { useAuth } from '../context/AuthContext.tsx';
 import { useCart } from '../context/CartContext.tsx';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase.ts';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 import { cn } from '../lib/utils.ts';
 import { ImageModal, SmartImage } from '../components/Common.tsx';
-import { createMockupRender, getMockupTemplates } from '../lib/api.ts';
+import { createMockupRender, getMockupTemplates, getProducts } from '../lib/api.ts';
 
 const ASPECT_RATIO_OPTIONS = [
   { value: '1:1', label: 'Square' },
@@ -134,6 +134,7 @@ export function Generator() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [addedProducts, setAddedProducts] = useState<Record<string, boolean>>({});
   const [mockupTemplates, setMockupTemplates] = useState<MockupTemplate[]>([]);
+  const [storefrontProducts, setStorefrontProducts] = useState<Product[]>([]);
   const [loadingTemplates, setLoadingTemplates] = useState(true);
   const [loadingMockups, setLoadingMockups] = useState(false);
   const [mockupError, setMockupError] = useState<string | null>(null);
@@ -163,6 +164,12 @@ export function Generator() {
     };
 
     void loadTemplates();
+
+    // Supplementary — only used to attach a real productId to the customization instead of
+    // inferring it from the template; don't fail template loading if this has an issue.
+    getProducts()
+      .then(setStorefrontProducts)
+      .catch((productsError) => console.error('Failed to load storefront products:', productsError));
   }, []);
 
   useEffect(() => {
@@ -675,6 +682,9 @@ export function Generator() {
                           className="text-center py-2 text-[9px] font-extrabold uppercase tracking-widest border border-white/10 hover:border-white text-gray-300 hover:text-white rounded-lg transition-all cursor-pointer"
                           onClick={() => {
                             const matchedTemplate = mockupTemplates.find((template) => template.id === product.templateId);
+                            const matchedProduct = storefrontProducts.find(
+                              (storefrontProduct) => storefrontProduct.mockupTemplateId === product.templateId
+                            );
                             const customization: ActiveCustomization = {
                               artworkId: selectedDesign.id,
                               sourceArtworkId: selectedDesign.sourceArtworkId,
@@ -683,6 +693,7 @@ export function Generator() {
                               templateId: product.templateId,
                               templateName: matchedTemplate?.name,
                               productType: product.productType,
+                              productId: matchedProduct ? Number(matchedProduct.id) : undefined,
                               mockupImageUrl: product.mockupImageUrl,
                               templateBaseImageUrl: matchedTemplate?.baseImage,
                               templateMaskImageUrl: matchedTemplate?.maskImage,
@@ -690,8 +701,14 @@ export function Generator() {
                               templateHighlightLayerUrl: matchedTemplate?.highlightLayer,
                               templateParts: matchedTemplate?.parts,
                               basePrice: product.basePrice,
-                              sizes: [...product.sizes],
-                              colours: [...product.colours],
+                              sizes:
+                                matchedProduct?.availableSizes && matchedProduct.availableSizes.length > 0
+                                  ? matchedProduct.availableSizes
+                                  : [...product.sizes],
+                              colours:
+                                matchedProduct?.availableColors && matchedProduct.availableColors.length > 0
+                                  ? matchedProduct.availableColors
+                                  : [...product.colours],
                               basePlacement:
                                 getPlacementFromCandidate(mockupRenders[product.templateId]?.placementOverride) ||
                                 (matchedTemplate ? getPlacementFromTemplate(matchedTemplate) : null) ||
