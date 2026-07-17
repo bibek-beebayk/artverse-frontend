@@ -1085,18 +1085,30 @@ export function Customization() {
       } else {
         for (const [partName, part] of partsNeedingRender) {
           setFinalizationStage(`Preparing ${partName.replace(/_/g, ' ')}…`);
-          const response = await createMockupRender({
-            templateId: customization.templateId,
-            artworkId: part.sourceArtworkId ?? customization.sourceArtworkId,
-            sourceImageUrl: part.imageUrl ?? customization.imageUrl,
-            sourcePrompt: part.userPrompt ?? customization.userPrompt,
-            variantColor: selectedColour,
-            variantSize: selectedSize,
-            placementOverride: part.placementOverride,
-            cropOverride: part.cropOverride,
-            textElements: part.textElements ?? [],
-            partName,
-          });
+          let response;
+          try {
+            response = await createMockupRender({
+              templateId: customization.templateId,
+              artworkId: part.sourceArtworkId ?? customization.sourceArtworkId,
+              sourceImageUrl: part.imageUrl ?? customization.imageUrl,
+              sourcePrompt: part.userPrompt ?? customization.userPrompt,
+              variantColor: selectedColour,
+              variantSize: selectedSize,
+              placementOverride: part.placementOverride,
+              cropOverride: part.cropOverride,
+              textElements: part.textElements ?? [],
+              partName,
+            });
+          } catch (renderError) {
+            // Re-throw the same error type (preserving ApiError.status so the outer catch's
+            // 401 re-auth check still fires) with the failing part name prefixed onto the message.
+            const reason = renderError instanceof Error ? renderError.message : 'an unknown error';
+            const label = `Could not render the ${partName.replace(/_/g, ' ')} design: ${reason}`;
+            if (renderError instanceof ApiError) {
+              throw new ApiError(label, renderError.status, renderError.fieldErrors);
+            }
+            throw new Error(label);
+          }
           workingPartsConfig = withPartUpdate(
             workingPartsConfig,
             partName,

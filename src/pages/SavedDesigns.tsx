@@ -26,6 +26,7 @@ export function SavedDesigns() {
   const [renameDraft, setRenameDraft] = useState('');
   const [pendingDeleteId, setPendingDeleteId] = useState<number | null>(null);
   const [busyId, setBusyId] = useState<number | null>(null);
+  const [brokenThumbnailIds, setBrokenThumbnailIds] = useState<Set<number>>(new Set());
 
   const loadProjects = async () => {
     setLoading(true);
@@ -216,13 +217,21 @@ export function SavedDesigns() {
               >
                 <div className="relative h-48 w-full overflow-hidden bg-cyber-gray/40">
                   {(() => {
-                    const thumbnailUrl = project.displayThumbnailUrl;
+                    const thumbnailUrl = brokenThumbnailIds.has(project.id) ? '' : project.displayThumbnailUrl;
                     return thumbnailUrl ? (
                       <img
                         src={thumbnailUrl}
                         alt={project.name}
                         className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
                         loading="lazy"
+                        onError={() =>
+                          setBrokenThumbnailIds((prev) => {
+                            if (prev.has(project.id)) return prev;
+                            const next = new Set(prev);
+                            next.add(project.id);
+                            return next;
+                          })
+                        }
                       />
                     ) : (
                       <div className="flex h-full w-full items-center justify-center text-gray-600">

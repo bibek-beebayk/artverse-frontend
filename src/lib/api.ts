@@ -755,7 +755,7 @@ interface BackendDesignProjectSummary {
   selected_color: string;
   selected_size: string;
   thumbnail_url: string | null;
-  display_thumbnail_url: string;
+  display_thumbnail_url?: string | null;
   placement_count: number;
   created_at: string;
   updated_at: string;
@@ -849,7 +849,11 @@ function mapDesignProjectSummary(project: BackendDesignProjectSummary): DesignPr
     selectedColor: project.selected_color,
     selectedSize: project.selected_size,
     thumbnailUrl: project.thumbnail_url ? resolveAssetUrl(project.thumbnail_url) : null,
-    displayThumbnailUrl: project.display_thumbnail_url ? resolveAssetUrl(project.display_thumbnail_url) : '',
+    // Backend already resolves the full fallback chain into display_thumbnail_url (including
+    // thumbnail_url as one of its own fallback levels), so this `?? thumbnail_url` is
+    // defense-in-depth only — it protects against a backend that hasn't rolled the field out
+    // yet, not a path that should normally trigger.
+    displayThumbnailUrl: resolveAssetUrl(project.display_thumbnail_url ?? project.thumbnail_url ?? '') || '',
     placementCount: project.placement_count,
     createdAt: project.created_at,
     updatedAt: project.updated_at,
