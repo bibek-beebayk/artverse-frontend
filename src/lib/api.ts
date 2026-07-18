@@ -81,6 +81,11 @@ interface BackendMockupTemplatePart {
   shadow_layer: string | null;
   highlight_layer: string | null;
   config: Record<string, unknown>;
+  dpi: number;
+  safe_area: { left: number; top: number; width: number; height: number } | Record<string, never>;
+  bleed_area: { top: number; right: number; bottom: number; left: number } | Record<string, never>;
+  print_file_width: number | null;
+  print_file_height: number | null;
 }
 
 interface BackendProductVariant {
@@ -438,6 +443,27 @@ function mapMockupTemplatePart(part: BackendMockupTemplatePart): MockupTemplateP
     shadowLayer: resolveAssetUrl(part.shadow_layer),
     highlightLayer: resolveAssetUrl(part.highlight_layer),
     config: part.config,
+    dpi: part.dpi,
+    safeArea:
+      part.safe_area && 'left' in part.safe_area
+        ? {
+            left: part.safe_area.left,
+            top: part.safe_area.top,
+            width: part.safe_area.width,
+            height: part.safe_area.height,
+          }
+        : null,
+    bleedArea:
+      part.bleed_area && 'top' in part.bleed_area
+        ? {
+            top: part.bleed_area.top,
+            right: part.bleed_area.right,
+            bottom: part.bleed_area.bottom,
+            left: part.bleed_area.left,
+          }
+        : null,
+    printFileWidth: part.print_file_width,
+    printFileHeight: part.print_file_height,
   };
 }
 

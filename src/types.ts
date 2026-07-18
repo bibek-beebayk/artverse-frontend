@@ -103,6 +103,17 @@ export interface TextElement {
   isBold?: boolean;
   isItalic?: boolean;
   letterSpacing?: number;
+  /** Horizontal alignment of multi-line text within its block. Defaults to 'center'. */
+  textAlign?: 'left' | 'center' | 'right';
+  /** Line spacing as a multiplier of the font's natural line height (e.g. 1.2 = 120%). */
+  lineHeight?: number;
+  /** True hides this layer from the preview and from checkout renders/print files, without
+   * deleting it — the layer's other properties are preserved for when it's unhidden. */
+  isHidden?: boolean;
+  /** True prevents this layer from being dragged/resized on the preview canvas. */
+  isLocked?: boolean;
+  /** Optional display name for the layer list — falls back to a truncated `text` when unset. */
+  layerName?: string;
 }
 
 export interface PartCustomization {
@@ -166,6 +177,17 @@ export interface MockupTemplatePart {
   shadowLayer: string | null;
   highlightLayer: string | null;
   config: Record<string, unknown>;
+  /** Required print resolution (pixels per inch) for this print area. */
+  dpi: number;
+  /** Safe area as {left, top, width, height} percentages within the print area — content
+   * outside this zone risks being trimmed. Null when not configured on the template. */
+  safeArea: { left: number; top: number; width: number; height: number } | null;
+  /** Bleed as {top, right, bottom, left} in pixels beyond the print-area edge. Null when not
+   * configured on the template. */
+  bleedArea: { top: number; right: number; bottom: number; left: number } | null;
+  /** Required print-file pixel dimensions at `dpi`. Null when not configured. */
+  printFileWidth: number | null;
+  printFileHeight: number | null;
 }
 
 export interface MockupTemplate {

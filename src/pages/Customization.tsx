@@ -20,11 +20,18 @@ import {
   Save,
   Loader2,
   AlertCircle,
+  Lock,
+  Unlock,
+  Eye,
+  EyeOff,
+  Copy as CopyIcon,
+  Undo2,
+  Redo2,
 } from 'lucide-react';
 import { cn } from '../lib/utils.ts';
 import { ImageModal } from '../components/Common.tsx';
 import { TShirtTemplate } from '../components/TShirtTemplate.tsx';
-import { ApiError, createMockupRender, getDesignProject, createDesignProject, replaceDesignProject } from '../lib/api.ts';
+import { ApiError, createMockupRender, getDesignProject, createDesignProject, replaceDesignProject, getProductVariants } from '../lib/api.ts';
 import {
   isPartConfigured,
   mapDesignProjectToActiveCustomization,
@@ -32,7 +39,7 @@ import {
   partNeedsRender,
   withPartUpdate,
 } from '../lib/designProjectMapping.ts';
-import type { ActiveCustomization, CropOverride, PartCustomization, PlacementOverride, TextElement } from '../types.ts';
+import type { ActiveCustomization, CropOverride, PartCustomization, PlacementOverride, ProductVariant, TextElement } from '../types.ts';
 
 type SaveStatus = 'idle' | 'dirty' | 'saving' | 'saved' | 'error';
 
@@ -50,6 +57,21 @@ type CropHandle =
   | 'se'
   | 'sw';
 type PlacementHandle = 'move' | 'se';
+
+/** One undo/redo step: everything a user-visible editing action can change. Deliberately not
+ * the *entire* component state (e.g. save/UI-open flags aren't part of "did the design change"). */
+interface EditorSnapshot {
+  activePart: string;
+  partsConfig: Record<string, PartCustomization>;
+  textElements: TextElement[];
+  placementDraft: { x: number; y: number; width: number; height: number } | null;
+  placementRotationDraft: number | null;
+  appliedCropOverride: CropOverride | null;
+  cornerRadius: number;
+  selectedColour: string;
+  selectedSize: string;
+}
+const MAX_HISTORY_ENTRIES = 50;
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max);
@@ -123,6 +145,7 @@ export function Customization() {
   const [partsConfig, setPartsConfig] = useState<Record<string, PartCustomization>>({});
   const [selectedColour, setSelectedColour] = useState<string>('');
   const [selectedSize, setSelectedSize] = useState<string>('');
+  const [productVariants, setProductVariants] = useState<ProductVariant[]>([]);
   const [quantity, setQuantity] = useState<number>(1);
   const [isAdding, setIsAdding] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
@@ -134,6 +157,48 @@ export function Customization() {
   const [isPreviewAssetLoading, setIsPreviewAssetLoading] = useState(true);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [designDimensions, setDesignDimensions] = useState<{ width: number; height: number } | null>(null);
+  const [designHasOpaqueBackground, setDesignHasOpaqueBackground] = useState(false);
+
+  // Image-quality check: does the source artwork look like it has a solid (non-transparent)
+  // background? Sampled via a downscaled offscreen canvas rather than full-resolution pixel
+  // analysis — a fast heuristic (corner alpha), not a precise transparency detector.
+  useEffect(() => {
+    const imageUrl = customization?.imageUrl;
+    if (!imageUrl) {
+      setDesignHasOpaqueBackground(false);
+      return;
+    }
+    let cancelled = false;
+    const image = new window.Image();
+    image.crossOrigin = 'anonymous';
+    image.onload = () => {
+      if (cancelled) return;
+      try {
+        const canvas = document.createElement('canvas');
+        const sampleSize = 8;
+        canvas.width = sampleSize;
+        canvas.height = sampleSize;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return;
+        ctx.drawImage(image, 0, 0, sampleSize, sampleSize);
+        const { data } = ctx.getImageData(0, 0, sampleSize, sampleSize);
+        const corners = [0, (sampleSize - 1) * 4, sampleSize * (sampleSize - 1) * 4, (sampleSize * sampleSize - 1) * 4];
+        const allOpaque = corners.every((offset) => data[offset + 3] >= 250);
+        if (!cancelled) setDesignHasOpaqueBackground(allOpaque);
+      } catch {
+        // Cross-origin image served without permissive CORS headers taints the canvas —
+        // pixels can't be read in that case. Fail open (no warning) rather than crash.
+        if (!cancelled) setDesignHasOpaqueBackground(false);
+      }
+    };
+    image.onerror = () => {
+      if (!cancelled) setDesignHasOpaqueBackground(false);
+    };
+    image.src = imageUrl;
+    return () => {
+      cancelled = true;
+    };
+  }, [customization?.imageUrl]);
   const [placementDraft, setPlacementDraft] = useState<{
     x: number;
     y: number;
@@ -142,6 +207,10 @@ export function Customization() {
   } | null>(null);
   const [cornerRadius, setCornerRadius] = useState(0);
   const [isPlacementDragging, setIsPlacementDragging] = useState(false);
+  const [snapGuides, setSnapGuides] = useState<{ vertical: 'left' | 'center' | 'right' | null; horizontal: 'top' | 'center' | 'bottom' | null }>({
+    vertical: null,
+    horizontal: null,
+  });
   const [isCropStudioOpen, setIsCropStudioOpen] = useState(false);
   const [isCropDragging, setIsCropDragging] = useState(false);
   const [appliedCropOverride, setAppliedCropOverride] = useState<CropOverride | null>(null);
@@ -181,6 +250,20 @@ export function Customization() {
     height: number;
   } | null>(null);
 
+  // Placement rotation was previously only ever a static pass-through of the template's base
+  // rotation — nothing in the UI could actually change it. Two-finger pinch/twist (below) is the
+  // first control that does, so it gets its own draft state alongside placementDraft.
+  const [placementRotationDraft, setPlacementRotationDraft] = useState<number | null>(null);
+  const pinchState = useRef<{
+    initialDistance: number;
+    initialAngle: number;
+    originWidth: number;
+    originHeight: number;
+    originRotation: number;
+    originX: number;
+    originY: number;
+  } | null>(null);
+
   const [textElements, setTextElements] = useState<TextElement[]>([]);
   const [activeTextId, setActiveTextId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'design' | 'text'>('design');
@@ -208,6 +291,13 @@ export function Customization() {
   const skipNextPartDirtyRef = useRef(false);
   const pendingSaveAfterLoginRef = useRef(false);
   const loadedProjectIdRef = useRef<number | undefined>(undefined);
+
+  // --- Undo/redo: one history entry per *gesture* (a whole drag, not every pointermove), and
+  // one per discrete action (add/remove text, colour/size change, part switch). Kept as a ref
+  // (not state) since the stacks themselves don't need to trigger re-renders — only a small
+  // "how many entries are there" counter does, for enabling/disabling the undo/redo buttons.
+  const historyRef = useRef<{ past: EditorSnapshot[]; future: EditorSnapshot[] }>({ past: [], future: [] });
+  const [historyCounts, setHistoryCounts] = useState({ past: 0, future: 0 });
 
   useEffect(() => {
     const idFromUrl = projectIdParam ? Number(projectIdParam) : undefined;
@@ -322,6 +412,7 @@ export function Customization() {
       setTemplateDimensions(null);
       setCropStudioImageDimensions(null);
       setPlacementDraft(null);
+      setPlacementRotationDraft(null);
       setCornerRadius(0);
       setIsCropStudioOpen(false);
       setAppliedCropOverride(null);
@@ -337,6 +428,8 @@ export function Customization() {
       setActiveTab('design');
       setPartsConfig(customization.partsConfig ? { ...customization.partsConfig } : {});
       setActivePart('front');
+      historyRef.current = { past: [], future: [] };
+      setHistoryCounts({ past: 0, future: 0 });
     }
   }, [customization]);
 
@@ -346,6 +439,61 @@ export function Customization() {
     }
     return customization.templateParts.find((part) => part.name === activePart) ?? null;
   }, [customization, activePart]);
+
+  // Product-view system: which print areas does the currently selected colour/size actually
+  // support? Only fetched for real storefront products (productId set) — template-only flows
+  // (no linked Product yet) have no variant-level restriction to enforce.
+  useEffect(() => {
+    if (!customization?.productId) {
+      setProductVariants([]);
+      return;
+    }
+    let cancelled = false;
+    getProductVariants({ productId: customization.productId })
+      .then((variants) => {
+        if (!cancelled) setProductVariants(variants);
+      })
+      .catch(() => {
+        if (!cancelled) setProductVariants([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [customization?.productId]);
+
+  const selectedVariant = useMemo(() => {
+    if (productVariants.length === 0) return null;
+    return (
+      productVariants.find(
+        (variant) => variant.colorName === selectedColour && variant.size === selectedSize
+      ) ?? null
+    );
+  }, [productVariants, selectedColour, selectedSize]);
+
+  /** Print areas the current colour/size can actually print on — null means "no restriction
+   * known" (no variant resolved yet, or the resolved variant declares no restriction), which
+   * callers should treat as "everything's available", not as "nothing's available". */
+  const supportedPrintAreas = useMemo(() => {
+    if (!selectedVariant || selectedVariant.supportedPrintAreas.length === 0) {
+      return null;
+    }
+    return new Set(selectedVariant.supportedPrintAreas);
+  }, [selectedVariant]);
+
+  // If switching colour/size drops support for the currently active part, jump to the first
+  // part that's still printable rather than leaving the editor showing a disabled tab.
+  useEffect(() => {
+    if (!supportedPrintAreas || supportedPrintAreas.has(activePart)) {
+      return;
+    }
+    const firstSupported = customization?.templateParts?.find((part) => supportedPrintAreas.has(part.name));
+    if (firstSupported) {
+      handlePartChange(firstSupported.name);
+    }
+    // handlePartChange is stable across renders for this purpose; omitting it avoids re-running
+    // this effect on every keystroke elsewhere in the editor that happens to redefine it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [supportedPrintAreas, activePart, customization?.templateParts]);
 
   const previewResolvedPlacement = useMemo(() => {
     if (!customization?.basePlacement) {
@@ -366,10 +514,10 @@ export function Customization() {
       height: Math.max(MIN_PLACEMENT_SIZE, Math.round(activePlacement.height)),
       cornerRadius: Math.max(0, Math.round(cornerRadius)),
       fit: customization.basePlacement.fit,
-      rotation: customization.basePlacement.rotation,
+      rotation: placementRotationDraft ?? customization.basePlacement.rotation,
       opacity: customization.basePlacement.opacity,
     };
-  }, [cornerRadius, customization, placementDraft]);
+  }, [cornerRadius, customization, placementDraft, placementRotationDraft]);
 
   const previewPlacementStyle = useMemo(() => {
     if (!previewResolvedPlacement || !templateDimensions) {
@@ -383,6 +531,151 @@ export function Customization() {
       height: `${(previewResolvedPlacement.height / templateDimensions.height) * 100}%`,
     };
   }, [previewResolvedPlacement, templateDimensions]);
+
+  // Safe area is expressed as percentages *within* the print area, so it maps directly onto
+  // CSS percentages of the placement box itself — no canvas-unit conversion needed.
+  const previewSafeAreaStyle = useMemo(() => {
+    const safeArea = activeTemplatePart?.safeArea;
+    if (!safeArea) return null;
+    return {
+      left: `${safeArea.left}%`,
+      top: `${safeArea.top}%`,
+      width: `${safeArea.width}%`,
+      height: `${safeArea.height}%`,
+    };
+  }, [activeTemplatePart]);
+
+  // Bleed is pixels *beyond* the print area edge, in template-canvas units — convert to a
+  // percentage of the canvas and expand the placement box outward by that amount.
+  const previewBleedAreaStyle = useMemo(() => {
+    const bleedArea = activeTemplatePart?.bleedArea;
+    if (!bleedArea || !previewResolvedPlacement || !templateDimensions) return null;
+    const bleedLeftPct = (bleedArea.left / templateDimensions.width) * 100;
+    const bleedRightPct = (bleedArea.right / templateDimensions.width) * 100;
+    const bleedTopPct = (bleedArea.top / templateDimensions.height) * 100;
+    const bleedBottomPct = (bleedArea.bottom / templateDimensions.height) * 100;
+    const leftPct = (previewResolvedPlacement.x / templateDimensions.width) * 100 - bleedLeftPct;
+    const topPct = (previewResolvedPlacement.y / templateDimensions.height) * 100 - bleedTopPct;
+    const widthPct = (previewResolvedPlacement.width / templateDimensions.width) * 100 + bleedLeftPct + bleedRightPct;
+    const heightPct = (previewResolvedPlacement.height / templateDimensions.height) * 100 + bleedTopPct + bleedBottomPct;
+    return {
+      left: `${leftPct}%`,
+      top: `${topPct}%`,
+      width: `${widthPct}%`,
+      height: `${heightPct}%`,
+    };
+  }, [activeTemplatePart, previewResolvedPlacement, templateDimensions]);
+
+  const imageQualityWarnings = useMemo(() => {
+    const warnings: string[] = [];
+    if (!isPartConfigured(partsConfig[activePart]) && !customization?.imageUrl) {
+      return warnings;
+    }
+
+    if (designHasOpaqueBackground) {
+      warnings.push(
+        'This image looks like it has a solid background rather than a transparent one — it may print with an unwanted coloured box around it.'
+      );
+    }
+
+    if (designDimensions && previewResolvedPlacement && templateDimensions && activeTemplatePart?.printFileWidth) {
+      // Estimate: how many source pixels does the print area need per canvas pixel at the
+      // template's required print resolution, then check whether the source image has enough
+      // native pixels to fill the placement box at that density. An estimate, not an exact DPI
+      // calculation — the mockup canvas and the real print file aren't guaranteed to be
+      // pixel-proportional, but this catches the common case (a small web image stretched large).
+      const requiredSourcePxPerCanvasPx = activeTemplatePart.printFileWidth / templateDimensions.width;
+      const requiredSourceWidth = previewResolvedPlacement.width * requiredSourcePxPerCanvasPx;
+      if (designDimensions.width < requiredSourceWidth * 0.6) {
+        warnings.push('This image is quite small for the area it covers — the print may look blurry or pixelated.');
+      } else if (designDimensions.width < requiredSourceWidth * 0.9) {
+        warnings.push('This image is a little low-resolution for how large it\'s displayed — consider a higher-resolution source.');
+      }
+    } else if (designDimensions && (designDimensions.width < 500 || designDimensions.height < 500)) {
+      // No template print-file target to compare against yet — fall back to a flat minimum.
+      warnings.push('This image is quite low-resolution — it may look blurry when printed.');
+    }
+
+    return warnings;
+  }, [designHasOpaqueBackground, designDimensions, previewResolvedPlacement, templateDimensions, activeTemplatePart, partsConfig, activePart, customization?.imageUrl]);
+
+  const captureEditorSnapshot = (): EditorSnapshot => ({
+    activePart,
+    partsConfig,
+    textElements,
+    placementDraft,
+    placementRotationDraft,
+    appliedCropOverride,
+    cornerRadius,
+    selectedColour,
+    selectedSize,
+  });
+
+  const restoreEditorSnapshot = (snapshot: EditorSnapshot) => {
+    skipNextDirtyRef.current = true;
+    skipNextPartDirtyRef.current = true;
+    setActivePart(snapshot.activePart);
+    setPartsConfig(snapshot.partsConfig);
+    setTextElements(snapshot.textElements);
+    setPlacementDraft(snapshot.placementDraft);
+    setPlacementRotationDraft(snapshot.placementRotationDraft);
+    setAppliedCropOverride(snapshot.appliedCropOverride);
+    setCornerRadius(snapshot.cornerRadius);
+    setSelectedColour(snapshot.selectedColour);
+    setSelectedSize(snapshot.selectedSize);
+  };
+
+  /** Call *before* starting a gesture or committing a discrete action, so the snapshot captures
+   * the "before" state — one history entry per user-visible action, not per pixel of a drag. */
+  const pushHistorySnapshot = () => {
+    const { past } = historyRef.current;
+    past.push(captureEditorSnapshot());
+    if (past.length > MAX_HISTORY_ENTRIES) {
+      past.shift();
+    }
+    historyRef.current = { past, future: [] };
+    setHistoryCounts({ past: past.length, future: 0 });
+  };
+
+  const undo = () => {
+    const { past, future } = historyRef.current;
+    if (past.length === 0) return;
+    const previous = past[past.length - 1];
+    const remainingPast = past.slice(0, -1);
+    future.push(captureEditorSnapshot());
+    historyRef.current = { past: remainingPast, future };
+    setHistoryCounts({ past: remainingPast.length, future: future.length });
+    restoreEditorSnapshot(previous);
+  };
+
+  const redo = () => {
+    const { past, future } = historyRef.current;
+    if (future.length === 0) return;
+    const next = future[future.length - 1];
+    const remainingFuture = future.slice(0, -1);
+    past.push(captureEditorSnapshot());
+    historyRef.current = { past, future: remainingFuture };
+    setHistoryCounts({ past: past.length, future: remainingFuture.length });
+    restoreEditorSnapshot(next);
+  };
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const isModifierPressed = event.metaKey || event.ctrlKey;
+      if (!isModifierPressed || event.key.toLowerCase() !== 'z') return;
+      const target = event.target as HTMLElement | null;
+      if (target && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)) return;
+      event.preventDefault();
+      if (event.shiftKey) {
+        redo();
+      } else {
+        undo();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activePart, partsConfig, textElements, placementDraft, placementRotationDraft, appliedCropOverride, cornerRadius, selectedColour, selectedSize]);
 
   const cropOverride = appliedCropOverride;
   const hasAppliedCrop = Boolean(
@@ -461,10 +754,11 @@ export function Customization() {
     event: React.PointerEvent<HTMLElement>,
     handle: PlacementHandle
   ) => {
-    if (!previewResolvedPlacement || !previewStageRef.current) {
+    if (!previewResolvedPlacement || !previewStageRef.current || pinchState.current) {
       return;
     }
 
+    pushHistorySnapshot();
     const rect = previewStageRef.current.getBoundingClientRect();
     placementDragState.current = {
       pointerId: event.pointerId,
@@ -498,22 +792,54 @@ export function Customization() {
     const deltaY = ((event.clientY - activeDrag.startY) / activeDrag.height) * templateDimensions.height;
 
     if (activeDrag.handle === 'move') {
+      const { width, height } = activeDrag.originPlacement;
+      let nextX = clamp(Math.round(activeDrag.originPlacement.x + deltaX), 0, templateDimensions.width - width);
+      let nextY = clamp(Math.round(activeDrag.originPlacement.y + deltaY), 0, templateDimensions.height - height);
+
+      // Centre/edge snapping: within a small threshold of a guide position, snap exactly to it
+      // and report which guide lit up so the preview can draw an alignment line.
+      const snapThresholdX = Math.max(6, templateDimensions.width * 0.012);
+      const snapThresholdY = Math.max(6, templateDimensions.height * 0.012);
+      const centerX = (templateDimensions.width - width) / 2;
+      const centerY = (templateDimensions.height - height) / 2;
+      const maxX = templateDimensions.width - width;
+      const maxY = templateDimensions.height - height;
+
+      let vertical: 'left' | 'center' | 'right' | null = null;
+      if (Math.abs(nextX - centerX) <= snapThresholdX) {
+        nextX = centerX;
+        vertical = 'center';
+      } else if (Math.abs(nextX) <= snapThresholdX) {
+        nextX = 0;
+        vertical = 'left';
+      } else if (Math.abs(nextX - maxX) <= snapThresholdX) {
+        nextX = maxX;
+        vertical = 'right';
+      }
+
+      let horizontal: 'top' | 'center' | 'bottom' | null = null;
+      if (Math.abs(nextY - centerY) <= snapThresholdY) {
+        nextY = centerY;
+        horizontal = 'center';
+      } else if (Math.abs(nextY) <= snapThresholdY) {
+        nextY = 0;
+        horizontal = 'top';
+      } else if (Math.abs(nextY - maxY) <= snapThresholdY) {
+        nextY = maxY;
+        horizontal = 'bottom';
+      }
+
+      setSnapGuides((prev) => (prev.vertical === vertical && prev.horizontal === horizontal ? prev : { vertical, horizontal }));
       setPlacementDraft({
-        x: clamp(
-          Math.round(activeDrag.originPlacement.x + deltaX),
-          0,
-          templateDimensions.width - activeDrag.originPlacement.width
-        ),
-        y: clamp(
-          Math.round(activeDrag.originPlacement.y + deltaY),
-          0,
-          templateDimensions.height - activeDrag.originPlacement.height
-        ),
-        width: activeDrag.originPlacement.width,
-        height: activeDrag.originPlacement.height,
+        x: nextX,
+        y: nextY,
+        width,
+        height,
       });
       return;
     }
+
+    setSnapGuides((prev) => (prev.vertical === null && prev.horizontal === null ? prev : { vertical: null, horizontal: null }));
 
     const nextWidth = clamp(
       Math.round(activeDrag.originPlacement.width + deltaX),
@@ -539,10 +865,71 @@ export function Customization() {
     if (activeDrag && activeDrag.pointerId === event.pointerId) {
       placementDragState.current = null;
       setIsPlacementDragging(false);
+      setSnapGuides({ vertical: null, horizontal: null });
       if (previewStageRef.current?.hasPointerCapture(event.pointerId)) {
         previewStageRef.current.releasePointerCapture(event.pointerId);
       }
     }
+  };
+
+  // Two-finger pinch-to-resize + twist-to-rotate. Pointer Events (above) already unify
+  // mouse/single-finger-touch dragging, but a genuine 2-finger gesture needs the native Touch
+  // API — Pointer Events fire once per finger independently, which makes coordinating two
+  // simultaneous contacts awkward. A single-finger touch still also fires pointerdown/move
+  // (browsers implement Pointer Events on top of touch), so each handler here explicitly checks
+  // `touches.length === 2` and defers to the single-pointer path otherwise.
+  const getTouchDistance = (touches: React.TouchList) => {
+    const dx = touches[0].clientX - touches[1].clientX;
+    const dy = touches[0].clientY - touches[1].clientY;
+    return Math.sqrt(dx * dx + dy * dy);
+  };
+  const getTouchAngle = (touches: React.TouchList) => {
+    const dx = touches[1].clientX - touches[0].clientX;
+    const dy = touches[1].clientY - touches[0].clientY;
+    return (Math.atan2(dy, dx) * 180) / Math.PI;
+  };
+
+  const handlePlacementTouchStart = (event: React.TouchEvent<HTMLElement>) => {
+    if (event.touches.length !== 2 || !previewResolvedPlacement) return;
+    event.preventDefault();
+    // A single-finger drag may already be in progress (its pointerdown fired first) — cancel it
+    // cleanly so the two gestures don't fight over placementDraft at the same time.
+    placementDragState.current = null;
+    setIsPlacementDragging(false);
+    pushHistorySnapshot();
+    pinchState.current = {
+      initialDistance: getTouchDistance(event.touches),
+      initialAngle: getTouchAngle(event.touches),
+      originWidth: previewResolvedPlacement.width,
+      originHeight: previewResolvedPlacement.height,
+      originRotation: previewResolvedPlacement.rotation ?? 0,
+      originX: previewResolvedPlacement.x,
+      originY: previewResolvedPlacement.y,
+    };
+  };
+
+  const handlePlacementTouchMove = (event: React.TouchEvent<HTMLElement>) => {
+    const state = pinchState.current;
+    if (!state || event.touches.length !== 2 || !templateDimensions) return;
+    event.preventDefault();
+
+    const scale = getTouchDistance(event.touches) / state.initialDistance;
+    const nextWidth = clamp(Math.round(state.originWidth * scale), MIN_PLACEMENT_SIZE, templateDimensions.width);
+    const nextHeight = clamp(Math.round(state.originHeight * scale), MIN_PLACEMENT_SIZE, templateDimensions.height);
+
+    // Resize around the gesture's original centre point rather than the top-left corner, so
+    // pinching feels like it's scaling "in place" the way it would on a native photo app.
+    const centerX = state.originX + state.originWidth / 2;
+    const centerY = state.originY + state.originHeight / 2;
+    const nextX = clamp(Math.round(centerX - nextWidth / 2), 0, templateDimensions.width - nextWidth);
+    const nextY = clamp(Math.round(centerY - nextHeight / 2), 0, templateDimensions.height - nextHeight);
+
+    setPlacementDraft({ x: nextX, y: nextY, width: nextWidth, height: nextHeight });
+    setPlacementRotationDraft(state.originRotation + (getTouchAngle(event.touches) - state.initialAngle));
+  };
+
+  const handlePlacementTouchEnd = () => {
+    pinchState.current = null;
   };
 
   const handleCropPointerDown = (event: React.PointerEvent<HTMLElement>, handle: CropHandle) => {
@@ -551,6 +938,7 @@ export function Customization() {
     if (!rect) {
       return;
     }
+    pushHistorySnapshot();
     cropDragState.current = {
       pointerId: event.pointerId,
       startX: event.clientX,
@@ -694,9 +1082,10 @@ export function Customization() {
     
     const textEl = textElements.find(t => t.id === textId);
     if (!textEl) return;
-    
+
     setActiveTextId(textId);
-    
+    pushHistorySnapshot();
+
     const rect = previewStageRef.current.getBoundingClientRect();
     textDragState.current = {
       pointerId: event.pointerId,
@@ -1213,24 +1602,66 @@ export function Customization() {
             </p>
           </div>
 
-          
-          {customization.productType === 'tshirt' && (
+          <div className="flex items-center justify-end gap-2 px-2">
+            <button
+              type="button"
+              onClick={undo}
+              disabled={historyCounts.past === 0}
+              className="flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-[9px] font-bold uppercase tracking-widest text-gray-300 transition-all hover:border-white/30 hover:text-white disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:border-white/10 disabled:hover:text-gray-300"
+              title="Undo (Ctrl/Cmd+Z)"
+            >
+              <Undo2 size={13} /> Undo
+            </button>
+            <button
+              type="button"
+              onClick={redo}
+              disabled={historyCounts.future === 0}
+              className="flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-[9px] font-bold uppercase tracking-widest text-gray-300 transition-all hover:border-white/30 hover:text-white disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:border-white/10 disabled:hover:text-gray-300"
+              title="Redo (Ctrl/Cmd+Shift+Z)"
+            >
+              <Redo2 size={13} /> Redo
+            </button>
+          </div>
+
+
+          {((customization.templateParts && customization.templateParts.length > 1) ||
+            (customization.productType === 'tshirt' && !customization.templateParts)) && (
             <div className="flex gap-4 border-b border-white/10 mb-4 px-2">
               {(customization.templateParts && customization.templateParts.length > 0
                 ? customization.templateParts.map((part) => part.name)
                 : ['front', 'back', 'left_sleeve', 'right_sleeve']
-              ).map(part => (
-                <button
-                  key={part}
-                  onClick={() => handlePartChange(part)}
-                  className={cn(
-                    "pb-2 text-xs uppercase tracking-widest border-b-2 transition-colors",
-                    activePart === part ? "border-neon-blue text-neon-blue" : "border-transparent text-gray-500 hover:text-white"
-                  )}
-                >
-                  {part.replace('_', ' ')}
-                </button>
-              ))}
+              ).map(part => {
+                // `null` supportedPrintAreas means "no per-variant restriction known" — every
+                // configured part stays clickable. A resolved set means this exact colour/size
+                // doesn't print everywhere the template supports in general.
+                const isSupported = !supportedPrintAreas || supportedPrintAreas.has(part);
+                return (
+                  <button
+                    key={part}
+                    onClick={() => {
+                      if (!isSupported) return;
+                      pushHistorySnapshot();
+                      handlePartChange(part);
+                    }}
+                    disabled={!isSupported}
+                    title={
+                      isSupported
+                        ? undefined
+                        : `The selected colour/size doesn't support printing on ${part.replace('_', ' ')}`
+                    }
+                    className={cn(
+                      "pb-2 text-xs uppercase tracking-widest border-b-2 transition-colors",
+                      !isSupported
+                        ? "border-transparent text-gray-700 cursor-not-allowed opacity-40"
+                        : activePart === part
+                          ? "border-neon-blue text-neon-blue"
+                          : "border-transparent text-gray-500 hover:text-white"
+                    )}
+                  >
+                    {part.replace('_', ' ')}
+                  </button>
+                );
+              })}
             </div>
           )}
           
@@ -1338,6 +1769,9 @@ export function Customization() {
                           ...previewPlacementStyle,
                           opacity: 0.96,
                           borderRadius: `${previewResolvedPlacement.cornerRadius ?? 0}px`,
+                          transform: previewResolvedPlacement.rotation
+                            ? `rotate(${previewResolvedPlacement.rotation}deg)`
+                            : undefined,
                           touchAction: 'none',
                           zIndex: 10,
                         }}
@@ -1346,6 +1780,10 @@ export function Customization() {
                           event.stopPropagation();
                           handlePlacementPointerDown(event, 'move');
                         }}
+                        onTouchStart={handlePlacementTouchStart}
+                        onTouchMove={handlePlacementTouchMove}
+                        onTouchEnd={handlePlacementTouchEnd}
+                        onTouchCancel={handlePlacementTouchEnd}
                       >
                         {hasAppliedCrop && previewCropFrameStyle ? (
                           <div
@@ -1368,6 +1806,13 @@ export function Customization() {
                         )}
 
                         <div className="pointer-events-none absolute inset-0 rounded-[inherit] border-2 border-neon-blue/80 shadow-[0_0_0_1px_rgba(255,255,255,0.65)_inset]" />
+                        {isPlacementDragging && previewSafeAreaStyle && (
+                          <div
+                            className="pointer-events-none absolute border border-dashed border-emerald-400/70"
+                            style={previewSafeAreaStyle}
+                            title="Safe area — keep important content inside this zone"
+                          />
+                        )}
                         <div className="pointer-events-none absolute left-2 top-2 rounded-full bg-cyber-black/75 px-2 py-1 text-[8px] font-black uppercase tracking-[0.25em] text-neon-blue">
                           Drag To Move
                         </div>
@@ -1383,6 +1828,42 @@ export function Customization() {
                           aria-label="Resize design"
                         />
                       </div>
+                    )}
+
+                    {/* Design-boundary guides — bleed zone + centre/edge alignment lines, shown
+                        only while actively dragging so the preview stays uncluttered otherwise. */}
+                    {isPlacementDragging && previewBleedAreaStyle && (
+                      <div
+                        className="pointer-events-none absolute z-[9] border border-dashed border-amber-400/60"
+                        style={previewBleedAreaStyle}
+                        title="Bleed area — designs may be trimmed slightly beyond the print area, not beyond this line"
+                      />
+                    )}
+                    {isPlacementDragging && snapGuides.vertical && (
+                      <div
+                        className="pointer-events-none absolute inset-y-0 z-[11] w-px bg-neon-pink shadow-[0_0_6px_rgba(255,0,170,0.8)]"
+                        style={{
+                          left:
+                            snapGuides.vertical === 'center'
+                              ? '50%'
+                              : snapGuides.vertical === 'left'
+                                ? '0%'
+                                : '100%',
+                        }}
+                      />
+                    )}
+                    {isPlacementDragging && snapGuides.horizontal && (
+                      <div
+                        className="pointer-events-none absolute inset-x-0 z-[11] h-px bg-neon-pink shadow-[0_0_6px_rgba(255,0,170,0.8)]"
+                        style={{
+                          top:
+                            snapGuides.horizontal === 'center'
+                              ? '50%'
+                              : snapGuides.horizontal === 'top'
+                                ? '0%'
+                                : '100%',
+                        }}
+                      />
                     )}
 
                     {previewShadowLayerUrl && (
@@ -1406,13 +1887,17 @@ export function Customization() {
 
                     {/* Text Elements */}
                     <div className="absolute inset-0 z-40 pointer-events-none" style={{ containerType: 'inline-size' }}>
-                      {textElements.map((textEl) => (
+                      {textElements.filter((textEl) => !textEl.isHidden).map((textEl) => (
                         <div
                           key={textEl.id}
                           className={cn(
-                            "absolute whitespace-pre text-center origin-center transition-all",
+                            "absolute whitespace-pre-line origin-center transition-all",
                             activeTextId === textEl.id ? "outline outline-2 outline-neon-pink outline-offset-2" : "hover:outline hover:outline-1 hover:outline-white/50",
-                            textDragState.current?.id === textEl.id ? "cursor-grabbing" : "cursor-grab pointer-events-auto"
+                            textEl.isLocked
+                              ? "cursor-not-allowed pointer-events-auto"
+                              : textDragState.current?.id === textEl.id
+                                ? "cursor-grabbing"
+                                : "cursor-grab pointer-events-auto"
                           )}
                           style={{
                             left: `${(textEl.x / templateDimensions.width) * 100}%`,
@@ -1423,10 +1908,17 @@ export function Customization() {
                             fontStyle: textEl.isItalic ? 'italic' : 'normal',
                             fontSize: `${(textEl.fontSize / templateDimensions.width) * 100}cqi`,
                             letterSpacing: `${(textEl.letterSpacing || 0) / templateDimensions.width * 100}cqi`,
+                            lineHeight: textEl.lineHeight ?? 1.2,
+                            textAlign: textEl.textAlign ?? 'center',
                             transform: `translate(-50%, -50%) rotate(${textEl.rotation || 0}deg)`,
                             touchAction: 'none'
                           }}
-                          onPointerDown={(e) => handleTextPointerDown(e, textEl.id)}
+                          onPointerDown={(e) => {
+                            if (textEl.isLocked) return;
+                            handleTextPointerDown(e, textEl.id);
+                          }}
+                          onClick={() => setActiveTextId(textEl.id)}
+                          title={textEl.isLocked ? 'This layer is locked — unlock it in the panel to move it' : undefined}
                         >
                           {textEl.text}
                         </div>
@@ -1509,6 +2001,7 @@ export function Customization() {
                 <button
                   type="button"
                   onClick={() => {
+                    pushHistorySnapshot();
                     setPlacementDraft(
                       customization.basePlacement
                         ? {
@@ -1519,6 +2012,7 @@ export function Customization() {
                           }
                         : null
                     );
+                    setPlacementRotationDraft(null);
                     setCornerRadius(0);
                     setAppliedCropOverride(null);
                     setDraftCropRect({ left: 0, top: 0, width: 100, height: 100 });
@@ -1694,6 +2188,16 @@ export function Customization() {
             <div className="space-y-6 sm:space-y-8 py-6 sm:py-8">
               {activeTab === 'design' && (
                 <>
+                  {imageQualityWarnings.length > 0 && (
+                    <div className="space-y-2 rounded-2xl border border-amber-400/30 bg-amber-400/5 p-4">
+                      {imageQualityWarnings.map((warning) => (
+                        <div key={warning} className="flex items-start gap-2 text-[10px] uppercase tracking-wide text-amber-300">
+                          <AlertCircle size={14} className="mt-0.5 shrink-0" />
+                          <span className="normal-case tracking-normal">{warning}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                   {customization.basePlacement && (
                 <div className="hidden lg:block space-y-5 sm:space-y-6 border-b border-white/5 pb-6 sm:pb-8">
                   <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
@@ -1800,7 +2304,11 @@ export function Customization() {
                     {customization.colours.map((colour) => (
                       <button
                         key={colour}
-                        onClick={() => setSelectedColour(colour)}
+                        onClick={() => {
+                          if (colour === selectedColour) return;
+                          pushHistorySnapshot();
+                          setSelectedColour(colour);
+                        }}
                         className={cn(
                           "px-4 py-2 text-[9px] font-extrabold uppercase tracking-widest rounded-lg border transition-all",
                           selectedColour === colour
@@ -1825,7 +2333,11 @@ export function Customization() {
                     {customization.sizes.map((size) => (
                       <button
                         key={size}
-                        onClick={() => setSelectedSize(size)}
+                        onClick={() => {
+                          if (size === selectedSize) return;
+                          pushHistorySnapshot();
+                          setSelectedSize(size);
+                        }}
                         className={cn(
                           "px-4 py-2.5 text-[9px] font-extrabold uppercase tracking-widest rounded-lg border transition-all",
                           selectedSize === size
@@ -1873,6 +2385,7 @@ export function Customization() {
                   <button
                     type="button"
                     onClick={() => {
+                      pushHistorySnapshot();
                       const newId = `text-${Date.now()}`;
                       setTextElements(prev => [...prev, {
                         id: newId,
@@ -1884,7 +2397,11 @@ export function Customization() {
                         y: templateDimensions ? templateDimensions.height / 2 : 500,
                         rotation: 0,
                         isBold: false,
-                        isItalic: false
+                        isItalic: false,
+                        textAlign: 'center',
+                        lineHeight: 1.2,
+                        isHidden: false,
+                        isLocked: false,
                       }]);
                       setActiveTextId(newId);
                     }}
@@ -1897,17 +2414,65 @@ export function Customization() {
                 {textElements.length > 0 && (
                   <div className="space-y-4">
                     {textElements.map(textEl => (
-                      <div key={textEl.id} className={cn("rounded-2xl border bg-white/5 p-4 transition-all", activeTextId === textEl.id ? "border-neon-pink" : "border-white/10")}>
-                        <div className="flex items-center justify-between mb-4">
+                      <div
+                        key={textEl.id}
+                        className={cn(
+                          "rounded-2xl border bg-white/5 p-4 transition-all",
+                          activeTextId === textEl.id ? "border-neon-pink" : "border-white/10",
+                          textEl.isHidden && "opacity-50"
+                        )}
+                      >
+                        <div className="flex items-center justify-between mb-4 gap-2">
                           <input
                             type="text"
-                            value={textEl.text}
-                            onChange={(e) => setTextElements(prev => prev.map(t => t.id === textEl.id ? { ...t, text: e.target.value } : t))}
+                            value={textEl.layerName ?? ''}
+                            onChange={(e) => setTextElements(prev => prev.map(t => t.id === textEl.id ? { ...t, layerName: e.target.value } : t))}
                             onFocus={() => setActiveTextId(textEl.id)}
-                            className="bg-transparent border-b border-white/20 text-white focus:outline-none focus:border-neon-pink text-sm w-full mr-4"
-                            placeholder="Type here..."
+                            className="bg-transparent border-b border-white/20 text-white focus:outline-none focus:border-neon-pink text-sm w-full mr-2 min-w-0"
+                            placeholder={textEl.text.slice(0, 24) || 'Text layer'}
                           />
-                          <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-1 shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => setTextElements(prev => prev.map(t => t.id === textEl.id ? { ...t, isLocked: !t.isLocked } : t))}
+                              className={cn("p-1.5 rounded transition-colors", textEl.isLocked ? "text-neon-blue" : "text-gray-500 hover:text-white")}
+                              title={textEl.isLocked ? "Unlock layer" : "Lock layer (prevents dragging on the preview)"}
+                            >
+                              {textEl.isLocked ? <Lock size={13} /> : <Unlock size={13} />}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setTextElements(prev => prev.map(t => t.id === textEl.id ? { ...t, isHidden: !t.isHidden } : t))}
+                              className={cn("p-1.5 rounded transition-colors", textEl.isHidden ? "text-neon-pink" : "text-gray-500 hover:text-white")}
+                              title={textEl.isHidden ? "Show layer" : "Hide layer (kept, just not shown or printed)"}
+                            >
+                              {textEl.isHidden ? <EyeOff size={13} /> : <Eye size={13} />}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                pushHistorySnapshot();
+                                const duplicateId = `text-${Date.now()}`;
+                                setTextElements(prev => {
+                                  const idx = prev.findIndex(t => t.id === textEl.id);
+                                  const clone: TextElement = {
+                                    ...textEl,
+                                    id: duplicateId,
+                                    x: textEl.x + 24,
+                                    y: textEl.y + 24,
+                                    layerName: textEl.layerName ? `${textEl.layerName} Copy` : undefined,
+                                  };
+                                  const next = [...prev];
+                                  next.splice(idx + 1, 0, clone);
+                                  return next;
+                                });
+                                setActiveTextId(duplicateId);
+                              }}
+                              className="p-1.5 rounded text-gray-500 hover:text-white transition-colors"
+                              title="Duplicate layer"
+                            >
+                              <CopyIcon size={13} />
+                            </button>
                             <button
                               type="button"
                               onClick={() => {
@@ -1919,7 +2484,7 @@ export function Customization() {
                                   return next;
                                 });
                               }}
-                              className="text-gray-500 hover:text-white transition-colors text-xs font-bold uppercase tracking-widest px-2"
+                              className="text-gray-500 hover:text-white transition-colors text-xs font-bold uppercase tracking-widest px-1.5"
                               title="Move Layer Forward"
                             >
                               Up
@@ -1935,15 +2500,18 @@ export function Customization() {
                                   return next;
                                 });
                               }}
-                              className="text-gray-500 hover:text-white transition-colors text-xs font-bold uppercase tracking-widest px-2"
+                              className="text-gray-500 hover:text-white transition-colors text-xs font-bold uppercase tracking-widest px-1.5"
                               title="Move Layer Backward"
                             >
                               Down
                             </button>
                             <button
                               type="button"
-                              onClick={() => setTextElements(prev => prev.filter(t => t.id !== textEl.id))}
-                              className="text-gray-500 hover:text-neon-pink transition-colors text-xs font-bold uppercase tracking-widest ml-2"
+                              onClick={() => {
+                                pushHistorySnapshot();
+                                setTextElements(prev => prev.filter(t => t.id !== textEl.id));
+                              }}
+                              className="text-gray-500 hover:text-neon-pink transition-colors text-xs font-bold uppercase tracking-widest pl-1.5"
                             >
                               Remove
                             </button>
@@ -1951,6 +2519,16 @@ export function Customization() {
                         </div>
                         {activeTextId === textEl.id && (
                           <div className="space-y-4 pt-4 border-t border-white/10">
+                            <div>
+                              <label className="block text-[8px] font-bold text-gray-400 uppercase tracking-[0.3em] mb-2">Text</label>
+                              <textarea
+                                value={textEl.text}
+                                onChange={(e) => setTextElements(prev => prev.map(t => t.id === textEl.id ? { ...t, text: e.target.value } : t))}
+                                rows={2}
+                                className="w-full resize-y bg-cyber-black border border-white/20 text-white text-sm p-2 rounded outline-none focus:border-neon-pink"
+                                placeholder="Type here... (use a new line for multi-line text)"
+                              />
+                            </div>
                             <div>
                               <label className="block text-[8px] font-bold text-gray-400 uppercase tracking-[0.3em] mb-2">Font Size</label>
                               <input
@@ -1983,6 +2561,38 @@ export function Customization() {
                                 onChange={(e) => setTextElements(prev => prev.map(t => t.id === textEl.id ? { ...t, letterSpacing: Number(e.target.value) } : t))}
                                 className="w-full accent-[var(--color-neon-pink)]"
                               />
+                            </div>
+                            <div>
+                              <label className="block text-[8px] font-bold text-gray-400 uppercase tracking-[0.3em] mb-2">Line Spacing</label>
+                              <input
+                                type="range"
+                                min={0.8}
+                                max={2.5}
+                                step={0.1}
+                                value={textEl.lineHeight ?? 1.2}
+                                onChange={(e) => setTextElements(prev => prev.map(t => t.id === textEl.id ? { ...t, lineHeight: Number(e.target.value) } : t))}
+                                className="w-full accent-[var(--color-neon-pink)]"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-[8px] font-bold text-gray-400 uppercase tracking-[0.3em] mb-2">Alignment</label>
+                              <div className="flex gap-2">
+                                {(['left', 'center', 'right'] as const).map((align) => (
+                                  <button
+                                    key={align}
+                                    type="button"
+                                    onClick={() => setTextElements(prev => prev.map(t => t.id === textEl.id ? { ...t, textAlign: align } : t))}
+                                    className={cn(
+                                      "flex-1 px-3 py-1.5 rounded border text-[9px] font-bold uppercase tracking-widest transition-colors",
+                                      (textEl.textAlign ?? 'center') === align
+                                        ? "bg-neon-blue text-cyber-black border-neon-blue"
+                                        : "bg-transparent text-gray-400 border-white/20 hover:border-white/50"
+                                    )}
+                                  >
+                                    {align}
+                                  </button>
+                                ))}
+                              </div>
                             </div>
                             <div className="grid grid-cols-2 gap-4">
                               <div>
