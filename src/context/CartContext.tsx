@@ -128,7 +128,13 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
         let unresolvedCount = 0;
         for (const item of unlinked) {
           const variants = item.templateId ? variantsByTemplate.get(item.templateId) ?? [] : [];
-          const variant = findMatchingVariant(variants, item.selectedColour, item.selectedSize);
+          // Prefer the exact variant this item was actually added with (stored at add-time via
+          // validateSellableSelection — see Shop.tsx/Generator.tsx/Customization.tsx) over the
+          // fuzzy colour/size text match, which can be ambiguous across products sharing one
+          // template. Only items added before this field existed fall back to the fuzzy match.
+          const variant =
+            (item.variantId !== undefined ? variants.find((candidate) => candidate.id === item.variantId) : undefined) ??
+            findMatchingVariant(variants, item.selectedColour, item.selectedSize, item.productId);
           if (!variant) {
             unresolvedCount += 1;
             continue;
@@ -200,6 +206,17 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
           .then(setBackendCart)
           .catch((error) => console.error('Failed to add item to cart:', error))
           .finally(() => setIsCartSyncing(false));
+        return;
+      }
+
+      if (!newItem.templateId) {
+        // Every legitimate guest-cart add (Shop.tsx, Generator.tsx, Customization.tsx) always
+        // sets templateId — a synthetic/recommendation item with none (e.g. CartPage's "Instant
+        // Bundle Add" upsell, which fabricates a product/price with no real template or variant
+        // behind it) never went through validateSellableSelection, so it must not be allowed
+        // into the cart either — matching the same rejection the authenticated branch above
+        // already applies for its own template-only case.
+        console.warn('Cannot add this item to the cart — it has no linked template/product.');
         return;
       }
 

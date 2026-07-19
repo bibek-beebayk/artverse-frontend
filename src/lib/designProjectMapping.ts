@@ -61,7 +61,7 @@ export function mapPlacementToPartCustomization(placement: DesignPlacement): Par
 /** Reopening a saved project: DesignProject -> the editor's ActiveCustomization + partsConfig. */
 export function mapDesignProjectToActiveCustomization(
   project: DesignProject,
-  meta: { basePrice: number; sizes: string[]; colours: string[] },
+  meta: { startingPrice: number | null; sizes: string[]; colours: string[] },
 ): ActiveCustomization {
   const partsConfig: Record<string, PartCustomization> = {};
   for (const placement of project.placements) {
@@ -86,7 +86,7 @@ export function mapDesignProjectToActiveCustomization(
     templateShadowLayerUrl: project.mockupTemplate.shadowLayer,
     templateHighlightLayerUrl: project.mockupTemplate.highlightLayer,
     templateParts: project.mockupTemplate.parts,
-    basePrice: meta.basePrice,
+    startingPrice: meta.startingPrice,
     sizes: meta.sizes,
     colours: meta.colours,
     basePlacement: frontPlacement?.placementOverride ?? null,

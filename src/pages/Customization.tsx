@@ -40,6 +40,7 @@ import {
   getDesignProject,
   createDesignProject,
   replaceDesignProject,
+  getProducts,
   getProductVariants,
   generatePrintFiles,
   getPrintFiles,
@@ -58,7 +59,9 @@ import {
   type PrintFileGenerationState,
   type PrintFilePartDisplayResult,
 } from '../lib/printFileHelpers.ts';
-import type { ActiveCustomization, CropOverride, PartCustomization, PlacementOverride, ProductVariant, TextElement } from '../types.ts';
+import { formatStartingPrice, parseStartingPrice } from '../lib/pricing.ts';
+import { describeSellableSelectionReason, validateSellableSelection } from '../lib/sellableSelection.ts';
+import type { ActiveCustomization, CropOverride, PartCustomization, PlacementOverride, Product, ProductVariant, TextElement } from '../types.ts';
 
 type SaveStatus = 'idle' | 'dirty' | 'saving' | 'saved' | 'error';
 
@@ -341,13 +344,21 @@ export function Customization() {
     setIsLoadingProject(true);
     setProjectLoadError(null);
 
-    getDesignProject(idFromUrl)
-      .then((project) => {
+    // Resolved from the real Product's server-computed starting price (never the template's
+    // config, which is preview-only and no longer treated as a selling price — see
+    // lib/pricing.ts / lib/sellableSelection.ts). getProducts() only ever returns
+    // active+sellable products, so a restored project's product not appearing here (e.g. it was
+    // deactivated, or its only variant became unsellable, since this project was last saved)
+    // legitimately resolves to null — the colour/size picker below independently detects and
+    // blocks on that case via productVariants' own is_available/is_sellable flags.
+    Promise.all([getDesignProject(idFromUrl), getProducts().catch(() => [] as Product[])])
+      .then(([project, products]) => {
         if (isCancelled) return;
-        const config = (project.mockupTemplate.config || {}) as Record<string, unknown>;
-        const basePrice = Number((config as { base_price?: unknown }).base_price ?? 0) || 0;
+        const matchedProduct = project.product
+          ? products.find((candidate) => Number(candidate.id) === project.product!.id)
+          : undefined;
         const nextCustomization = mapDesignProjectToActiveCustomization(project, {
-          basePrice,
+          startingPrice: matchedProduct ? parseStartingPrice(matchedProduct.startingPrice) : null,
           sizes: project.mockupTemplate.supportedSizes,
           colours: project.mockupTemplate.supportedColors,
         });
@@ -538,6 +549,120 @@ export function Customization() {
       ) ?? null
     );
   }, [productVariants, selectedColour, selectedSize]);
+
+  const sellableVariants = useMemo(
+    () => productVariants.filter((variant) => variant.isAvailable && variant.isSellable),
+    [productVariants]
+  );
+
+  // A restored saved design (opened via /customize?project=<id>) vs. a fresh customization
+  // entered from Shop/Generator — governs whether an unsellable current selection gets silently
+  // corrected (fresh) or surfaced as a blocking "no longer available" state instead (restored;
+  // see section 16 — never silently swap a restored design's variant out from under the user).
+  const isRestoredProject = customization?.designProjectId !== undefined;
+
+  // Fresh customization only: once real variant data has loaded, if the naive default (first
+  // colour/size from the template/product lists — set by the initialization effect above, before
+  // sellability is known) isn't actually sellable, switch to the first variant that is. Never
+  // touches a restored project's selection — see restoredVariantIsInvalid below for that case.
+  useEffect(() => {
+    if (isRestoredProject || sellableVariants.length === 0) {
+      return;
+    }
+    const currentIsSellable = sellableVariants.some(
+      (variant) => variant.colorName === selectedColour && variant.size === selectedSize
+    );
+    if (currentIsSellable) {
+      return;
+    }
+    const firstSellable = sellableVariants[0];
+    // This is a corrective default, not the user picking a different variant — don't let it
+    // falsely mark every configured part's production file stale.
+    skipNextVariantStaleRef.current = true;
+    setSelectedColour(firstSellable.colorName);
+    setSelectedSize(firstSellable.size);
+    // Deliberately not depending on selectedColour/selectedSize — this effect corrects an
+    // out-of-date default exactly once per variant-data load, it must not fight the user's own
+    // subsequent colour/size picks (which may legitimately be a different, still-sellable variant).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sellableVariants, isRestoredProject]);
+
+  // Restored project only: the saved colour/size no longer resolves to a sellable variant (the
+  // admin marked it unavailable/missing-cost, or discontinued it, since this project was saved).
+  // Blocking, not silently corrected — see the "This product option is no longer available"
+  // banner near the colour/size picker below.
+  const restoredVariantIsInvalid = useMemo(() => {
+    if (!isRestoredProject || !customization?.productId || productVariants.length === 0) {
+      return false;
+    }
+    const current = productVariants.find(
+      (variant) => variant.colorName === selectedColour && variant.size === selectedSize
+    );
+    return !current || !(current.isAvailable && current.isSellable);
+  }, [isRestoredProject, customization?.productId, productVariants, selectedColour, selectedSize]);
+
+  // A minimal Product-shaped object for validateSellableSelection() — Customization.tsx never
+  // fetches a full Product record of its own; `startingPrice` is passed through unchanged from
+  // wherever this customization was entered (Shop.tsx/Generator.tsx's own validated selection, or
+  // the restored-project loader above), never recomputed here (the true starting price depends on
+  // server-side markup rules this page has no access to). availability/counts, unlike price, ARE
+  // accurately derivable client-side from productVariants' own is_available/is_sellable flags.
+  const productForSellabilityGuard: Product | null = useMemo(() => {
+    if (!customization?.productId) {
+      return null;
+    }
+    return {
+      id: String(customization.productId),
+      name: customization.templateName ?? customization.productType,
+      category: '',
+      startingPrice:
+        customization.startingPrice !== null && customization.startingPrice !== undefined
+          ? String(customization.startingPrice)
+          : null,
+      isAvailable: sellableVariants.length > 0,
+      availableVariantCount: sellableVariants.length,
+      totalVariantCount: productVariants.length,
+      imageUrl: customization.mockupImageUrl,
+      variants: productVariants,
+    };
+  }, [customization, productVariants, sellableVariants.length]);
+
+  /** The one guard for every purchasable action on this page (enabling "Add to Cart", the price
+   * display below) — see lib/sellableSelection.ts. `selection` is non-null only when there's a
+   * real product AND the currently selected colour/size resolves to a sellable variant. */
+  const sellableSelection = useMemo(
+    () => validateSellableSelection(productForSellabilityGuard, selectedVariant),
+    [productForSellabilityGuard, selectedVariant]
+  );
+
+  /** Per-value (not per-combo — colour and size are independent selectors in this UI, not a
+   * combined grid) disabled state + reason for the colour/size pickers below. No variant data at
+   * all (productVariants.length === 0 — template-only preview, or not loaded yet) never disables
+   * anything — that's the existing "no restriction known" behaviour, unchanged. A colour/size
+   * IS disabled only once real variant data shows every matching row is unavailable/unsellable. */
+  const describeOptionSellability = (kind: 'colour' | 'size', value: string): { disabled: boolean; reason: string | null } => {
+    if (productVariants.length === 0) {
+      return { disabled: false, reason: null };
+    }
+    const matches = productVariants.filter((variant) =>
+      kind === 'colour' ? variant.colorName === value : variant.size === value
+    );
+    if (matches.length === 0) {
+      // The template lists this as an option but no variant backs it at all — nothing to
+      // disable against (matches this page's existing template-fallback behaviour).
+      return { disabled: false, reason: null };
+    }
+    if (matches.some((variant) => variant.isAvailable && variant.isSellable)) {
+      return { disabled: false, reason: null };
+    }
+    if (matches.every((variant) => !variant.isAvailable)) {
+      return { disabled: true, reason: 'Unavailable' };
+    }
+    if (matches.some((variant) => variant.isAvailable && !variant.pricingReady)) {
+      return { disabled: true, reason: 'Pricing not configured' };
+    }
+    return { disabled: true, reason: 'Not supported' };
+  };
 
   /** Print areas the current colour/size can actually print on — null means "no restriction
    * known" (no variant resolved yet, or the resolved variant declares no restriction), which
@@ -1382,8 +1507,12 @@ export function Customization() {
     );
   }
 
-  // Render product preview configuration based on choices
-  const totalPrice = (customization.basePrice * quantity).toFixed(2);
+  // Render product preview configuration based on choices. Deliberately sourced from the
+  // validated sellable selection (never customization.startingPrice directly) — if the currently
+  // selected colour/size isn't actually sellable, there's no honest per-unit price to multiply,
+  // and the UI must say so rather than showing a stale/misleading number.
+  const unitStartingPrice = sellableSelection.selection?.startingPrice ?? null;
+  const totalPrice = unitStartingPrice !== null ? (unitStartingPrice * quantity).toFixed(2) : null;
   const previewTemplateUrl =
     activeTemplatePart?.baseImage || customization.templateBaseImageUrl || customization.mockupImageUrl;
   const previewShadowLayerUrl = activeTemplatePart?.shadowLayer || customization.templateShadowLayerUrl;
@@ -1759,6 +1888,10 @@ export function Customization() {
 
   const handleConfirmAddToCart = async () => {
     if (!customization) return;
+    // Same guard the button's `disabled` state already reflects — re-checked here since this is
+    // also the function that actually performs the purchase action (a disabled button is a UI
+    // affordance, not the enforcement point).
+    if (!sellableSelection.selection) return;
     setIsAdding(true);
     setPreviewLoading(true);
     setPreviewError(null);
@@ -1873,7 +2006,12 @@ export function Customization() {
         selectedSize: selectedSize,
         selectedColour: selectedColour,
         quantity: quantity,
-        price: customization.basePrice,
+        // A provisional guest-mode estimate from the validated sellable selection — never a
+        // template/hardcoded value. For a signed-in add (designProjectId set below), the backend
+        // recomputes and charges its own server-side unit_price regardless of what's sent here.
+        price: sellableSelection.selection.startingPrice,
+        productId: sellableSelection.selection.product.id ? Number(sellableSelection.selection.product.id) : undefined,
+        variantId: sellableSelection.selection.variant.id,
         templateId: customization.templateId,
         backendRenderId: finalizedRenderId,
         placementOverride: primaryPart?.placementOverride ?? previewResolvedPlacement ?? undefined,
@@ -2782,24 +2920,32 @@ export function Customization() {
                     Select Product Shade
                   </label>
                   <div className="flex flex-wrap gap-3">
-                    {customization.colours.map((colour) => (
-                      <button
-                        key={colour}
-                        onClick={() => {
-                          if (colour === selectedColour) return;
-                          pushHistorySnapshot();
-                          setSelectedColour(colour);
-                        }}
-                        className={cn(
-                          "px-4 py-2 text-[9px] font-extrabold uppercase tracking-widest rounded-lg border transition-all",
-                          selectedColour === colour
-                            ? "bg-white text-cyber-black border-white"
-                            : "bg-white/5 border-white/10 text-gray-400 hover:text-white"
-                        )}
-                      >
-                        {colour}
-                      </button>
-                    ))}
+                    {customization.colours.map((colour) => {
+                      const { disabled, reason } = describeOptionSellability('colour', colour);
+                      return (
+                        <button
+                          key={colour}
+                          disabled={disabled}
+                          title={reason ?? undefined}
+                          onClick={() => {
+                            if (disabled || colour === selectedColour) return;
+                            pushHistorySnapshot();
+                            setSelectedColour(colour);
+                          }}
+                          className={cn(
+                            "px-4 py-2 text-[9px] font-extrabold uppercase tracking-widest rounded-lg border transition-all",
+                            disabled
+                              ? "bg-white/5 border-white/5 text-gray-600 cursor-not-allowed opacity-50"
+                              : selectedColour === colour
+                                ? "bg-white text-cyber-black border-white"
+                                : "bg-white/5 border-white/10 text-gray-400 hover:text-white"
+                          )}
+                        >
+                          {colour}
+                          {reason && <span className="ml-1.5 normal-case font-normal text-[8px] opacity-75">({reason})</span>}
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
               )}
@@ -2811,24 +2957,32 @@ export function Customization() {
                     Choose Dimensions / Size
                   </label>
                   <div className="flex flex-wrap gap-3">
-                    {customization.sizes.map((size) => (
-                      <button
-                        key={size}
-                        onClick={() => {
-                          if (size === selectedSize) return;
-                          pushHistorySnapshot();
-                          setSelectedSize(size);
-                        }}
-                        className={cn(
-                          "px-4 py-2.5 text-[9px] font-extrabold uppercase tracking-widest rounded-lg border transition-all",
-                          selectedSize === size
-                            ? "bg-neon-purple text-white border-neon-purple neon-glow-purple"
-                            : "bg-white/5 border-white/10 text-gray-400 hover:text-white"
-                        )}
-                      >
-                        {size}
-                      </button>
-                    ))}
+                    {customization.sizes.map((size) => {
+                      const { disabled, reason } = describeOptionSellability('size', size);
+                      return (
+                        <button
+                          key={size}
+                          disabled={disabled}
+                          title={reason ?? undefined}
+                          onClick={() => {
+                            if (disabled || size === selectedSize) return;
+                            pushHistorySnapshot();
+                            setSelectedSize(size);
+                          }}
+                          className={cn(
+                            "px-4 py-2.5 text-[9px] font-extrabold uppercase tracking-widest rounded-lg border transition-all",
+                            disabled
+                              ? "bg-white/5 border-white/5 text-gray-600 cursor-not-allowed opacity-50"
+                              : selectedSize === size
+                                ? "bg-neon-purple text-white border-neon-purple neon-glow-purple"
+                                : "bg-white/5 border-white/10 text-gray-400 hover:text-white"
+                          )}
+                        >
+                          {size}
+                          {reason && <span className="ml-1.5 normal-case font-normal text-[8px] opacity-75">({reason})</span>}
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
               )}
@@ -3109,10 +3263,27 @@ export function Customization() {
           </div>
 
           <div className="pt-6 sm:pt-8">
+            {restoredVariantIsInvalid && (
+              <div className="mb-6 rounded-xl border border-amber-400/25 bg-amber-400/10 px-4 py-3 text-[10px] font-bold uppercase tracking-widest text-amber-100">
+                This product option is no longer available. Choose another variant before continuing.
+              </div>
+            )}
+            {!restoredVariantIsInvalid && !sellableSelection.selection && customization.productId && (
+              <div className="mb-6 rounded-xl border border-amber-400/25 bg-amber-400/10 px-4 py-3 text-[10px] font-bold uppercase tracking-widest text-amber-100">
+                {describeSellableSelectionReason(sellableSelection.reason) ?? 'This item is not yet available for purchase.'}
+              </div>
+            )}
+            {!customization.productId && (
+              <div className="mb-6 rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-[10px] font-bold uppercase tracking-widest text-gray-400">
+                Preview only — this prop isn't linked to a purchasable product yet.
+              </div>
+            )}
             <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between mb-6">
               <div>
-                <span className="text-[10px] text-gray-500 uppercase tracking-widest block">Total Cost Price (VAT inc)</span>
-                <span className="text-4xl font-display font-black text-white">${totalPrice}</span>
+                <span className="text-[10px] text-gray-500 uppercase tracking-widest block">Starting Estimate (VAT inc)</span>
+                <span className="text-4xl font-display font-black text-white">
+                  {totalPrice !== null ? `$${totalPrice}` : 'Currently unavailable'}
+                </span>
               </div>
               <div className="sm:text-right">
                 <span className="text-[8px] text-neon-blue uppercase font-bold tracking-widest bg-neon-blue/10 px-2 py-1 rounded">
@@ -3121,14 +3292,14 @@ export function Customization() {
               </div>
             </div>
 
-            
+
             <button
               onClick={handleGenerateRealisticPreview}
               disabled={showPreviewLoading}
               className={cn(
                 "w-full flex items-center justify-center gap-3 px-8 py-4 mb-4 rounded-full font-bold uppercase tracking-widest text-xs transition-all duration-300 border-2",
-                showPreviewLoading 
-                  ? "border-cyber-gray text-gray-500 cursor-not-allowed" 
+                showPreviewLoading
+                  ? "border-cyber-gray text-gray-500 cursor-not-allowed"
                   : "border-neon-pink text-neon-pink hover:bg-neon-pink/10 hover:shadow-neon-pink"
               )}
             >
@@ -3137,10 +3308,12 @@ export function Customization() {
             </button>
             <button
               onClick={handleConfirmAddToCart}
-              disabled={isAdding || isSuccess}
+              disabled={isAdding || isSuccess || !sellableSelection.selection}
+              title={sellableSelection.selection ? undefined : describeSellableSelectionReason(sellableSelection.reason) ?? undefined}
               className={cn(
                 "w-full flex items-center justify-center gap-3 py-4 text-xs font-black uppercase tracking-widest text-cyber-black bg-white hover:bg-neon-blue hover:text-white rounded-xl transition-all duration-300",
-                isSuccess && "bg-neon-pink text-white neon-glow-pink"
+                isSuccess && "bg-neon-pink text-white neon-glow-pink",
+                !sellableSelection.selection && !isSuccess && "opacity-40 cursor-not-allowed hover:bg-white hover:text-cyber-black"
               )}
             >
               {isAdding ? (

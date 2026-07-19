@@ -96,6 +96,10 @@ interface BackendMockupTemplatePart {
 
 interface BackendProductVariant {
   id: number;
+  // Always numeric — ProductVariant.product is a required FK on the backend. Typed as
+  // `number | null` anyway (rather than just `number`) because this is untrusted wire data: a
+  // malformed/legacy response could still send null, and mapProductVariant()'s job is to catch
+  // that explicitly rather than let TypeScript's static type paper over a real runtime check.
   product_id: number | null;
   template_id: number;
   sku: string;
@@ -107,6 +111,8 @@ interface BackendProductVariant {
   base_cost: string | null;
   inventory: number | null;
   is_available: boolean;
+  is_sellable: boolean;
+  pricing_ready: boolean;
   supported_print_areas: string[];
   external_provider: string;
   external_variant_id: string;
@@ -436,7 +442,9 @@ function mapProduct(product: BackendProduct): Product {
     thumbnailUrl,
     description: product.description,
     mockupTemplateId: product.mockup_template_id,
-    variants: (product.variants || []).map(mapProductVariant),
+    variants: (product.variants || [])
+      .map(mapProductVariant)
+      .filter((variant): variant is ProductVariant => variant !== null),
     availableSizes: product.available_sizes,
     availableColors: product.available_colors,
   };
@@ -475,7 +483,17 @@ function mapMockupTemplatePart(part: BackendMockupTemplatePart): MockupTemplateP
   };
 }
 
-export function mapProductVariant(variant: BackendProductVariant): ProductVariant {
+/** ProductVariant.product is a required FK on the backend — a response with no product_id is a
+ * malformed/unexpected payload, not a valid "orphan" variant. Fails clearly (returns null,
+ * logs a warning) instead of silently coercing it to 0 and letting an unpurchasable, ownerless
+ * variant slip into customer-facing selection. Every call site below excludes nulls from
+ * customer-facing lists rather than trying to render them. */
+export function mapProductVariant(variant: BackendProductVariant): ProductVariant | null {
+  if (variant.product_id === null || variant.product_id === undefined) {
+    console.warn(`ProductVariant ${variant.id} has no product_id — excluding it from selection.`);
+    return null;
+  }
+
   return {
     id: variant.id,
     productId: variant.product_id,
@@ -489,6 +507,10 @@ export function mapProductVariant(variant: BackendProductVariant): ProductVarian
     baseCost: variant.base_cost,
     inventory: variant.inventory,
     isAvailable: variant.is_available,
+    // Absent (not just false) is treated as NOT sellable — a conservative fallback so an older
+    // backend/cached response missing this field never accidentally enables a purchase action.
+    isSellable: variant.is_sellable === true,
+    pricingReady: variant.pricing_ready,
     supportedPrintAreas: variant.supported_print_areas,
     externalProvider: variant.external_provider,
     externalVariantId: variant.external_variant_id,
@@ -647,7 +669,7 @@ export async function getProductVariants(filter: { productId?: number; templateI
   if (filter.templateId !== undefined) params.set("template_id", String(filter.templateId));
   const search = params.toString() ? `?${params.toString()}` : "";
   const variants = await fetchJson<BackendProductVariant[]>(`/generator/product-variants/${search}`);
-  return variants.map(mapProductVariant);
+  return variants.map(mapProductVariant).filter((variant): variant is ProductVariant => variant !== null);
 }
 
 export async function createMockupRender(input: {

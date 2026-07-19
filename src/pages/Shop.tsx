@@ -6,6 +6,8 @@ import { SmartImage } from '../components/Common.tsx';
 import { createMockupRender, getArtworks, getMockupTemplates, getProducts } from '../lib/api.ts';
 import { useCart } from '../context/CartContext.tsx';
 import { cn } from '../lib/utils.ts';
+import { formatStartingPrice } from '../lib/pricing.ts';
+import { describeSellableSelectionReason, validateSellableSelection } from '../lib/sellableSelection.ts';
 
 interface ShopSample {
   key: string;
@@ -23,36 +25,35 @@ interface SampleVariant {
   placementOverride?: PlacementOverride;
 }
 
+// Deliberately no price here — this map exists purely to give the template-only preview flow
+// (choosing a prop/design with no purchasable Product resolved yet) plausible sizes/colours to
+// render a sample mockup with. See lib/sellableSelection.ts / lib/pricing.ts for how an actual
+// selling price is derived once a real, sellable Product+ProductVariant is resolved — never from
+// this table, and never as a fallback when that resolution fails.
 const TEMPLATE_META: Record<
   string,
   {
-    basePrice: number;
     fallbackSizes: string[];
     fallbackColours: string[];
   }
 > = {
   tshirt: {
-    basePrice: 29.99,
     fallbackSizes: ['S', 'M', 'L', 'XL'],
     fallbackColours: ['Black', 'White', 'Grey'],
   },
   hoodie: {
-    basePrice: 49.99,
     fallbackSizes: ['S', 'M', 'L', 'XL'],
     fallbackColours: ['Black', 'White', 'Grey'],
   },
   mug: {
-    basePrice: 18,
     fallbackSizes: ['11oz', '15oz'],
     fallbackColours: ['Classic Pearl', 'Black Rim'],
   },
   canvas: {
-    basePrice: 45,
     fallbackSizes: ['12" x 12"', '18" x 18"'],
     fallbackColours: ['Gallery Wrap'],
   },
   poster: {
-    basePrice: 24.99,
     fallbackSizes: ['12" x 18"', '18" x 24"'],
     fallbackColours: ['Matte'],
   },
@@ -61,7 +62,6 @@ const TEMPLATE_META: Record<
 function getTemplateMeta(template: MockupTemplate) {
   return (
     TEMPLATE_META[template.productType] || {
-      basePrice: 24.99,
       fallbackSizes: ['Standard'],
       fallbackColours: ['Default'],
     }
@@ -292,6 +292,16 @@ export function Shop() {
   // product_id into the customization instead of inferring it solely from the template.
   const selectedProduct =
     products.find((product) => product.mockupTemplateId === selectedTemplate?.id) ?? null;
+  // The variant the sample flow will actually purchase (Shop.tsx works off a single implicit
+  // "primary" colour/size, not a full picker) — the first sellable one, or null if the resolved
+  // product has none. See getSampleVariants below, which reuses this same primary colour/size for
+  // every generated sample so the picked variant and the rendered previews stay consistent.
+  const defaultSellableVariant =
+    selectedProduct?.variants?.find((variant) => variant.isAvailable && variant.isSellable) ?? null;
+  // The one guard for every purchasable action below (Add To Cart, Specs Setup, the price badge)
+  // — a template selected with no matching sellable Product+ProductVariant never becomes
+  // purchasable, it stays preview-only. See lib/sellableSelection.ts.
+  const sellableSelection = validateSellableSelection(selectedProduct, defaultSellableVariant);
 
   useEffect(() => {
     if (!selectedTemplate || !selectedDesign) {
@@ -444,8 +454,12 @@ export function Shop() {
     if (!selectedTemplate || !selectedDesign) {
       return;
     }
+    // A template with no resolved, sellable Product+ProductVariant is preview-only — it must
+    // never reach the cart. See lib/sellableSelection.ts.
+    if (!sellableSelection.selection) {
+      return;
+    }
 
-    const meta = getTemplateMeta(selectedTemplate);
     const cartItemId = `shop-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 
     addToCart({
@@ -458,7 +472,11 @@ export function Shop() {
       selectedSize: sample.variantSize,
       selectedColour: sample.variantColor,
       quantity: 1,
-      price: Number(selectedTemplate.config.base_price ?? meta.basePrice),
+      // A provisional guest-mode estimate from the validated sellable selection — never the
+      // template's config price.
+      price: sellableSelection.selection.startingPrice,
+      productId: Number(sellableSelection.selection.product.id),
+      variantId: sellableSelection.selection.variant.id,
       templateId: selectedTemplate.id,
       backendRenderId: sample.render.id,
       placementOverride: sample.render.placementOverride ?? undefined,
@@ -484,6 +502,12 @@ export function Shop() {
     // has no configured variants yet — see designProjectMapping / TODO.md item 9.
     const productSizes = selectedProduct?.availableSizes?.filter((size) => size) ?? [];
     const productColours = selectedProduct?.availableColors?.filter((colour) => colour) ?? [];
+    // Entering the customization editor itself stays allowed even without a resolved sellable
+    // product — it's a legitimate template-only preview/exploration flow (see
+    // lib/sellableSelection.ts's docs and section 2 of the product/variant refactor task).
+    // Customization.tsx independently disables its own Add-to-Cart CTA and shows a "preview
+    // only" state whenever it doesn't resolve a sellable selection, so no purchasable action can
+    // ever be reached from here even though navigation itself isn't blocked.
     const customization: ActiveCustomization = {
       artworkId: selectedDesign.id,
       sourceArtworkId: selectedDesign.backendArtworkId,
@@ -499,7 +523,7 @@ export function Shop() {
       templateShadowLayerUrl: selectedTemplate.shadowLayer,
       templateHighlightLayerUrl: selectedTemplate.highlightLayer,
       templateParts: selectedTemplate.parts,
-      basePrice: Number(selectedTemplate.config.base_price ?? meta.basePrice),
+      startingPrice: sellableSelection.selection?.startingPrice ?? null,
       sizes:
         productSizes.length > 0
           ? productSizes
@@ -863,10 +887,19 @@ export function Shop() {
               </div>
             </div>
 
+            {!sellableSelection.selection && (
+              <div className="rounded-2xl border border-white/10 bg-white/5 px-5 py-4 text-[10px] font-bold uppercase tracking-[0.28em] text-gray-400">
+                {describeSellableSelectionReason(sellableSelection.reason) === 'Currently unavailable'
+                  ? 'This prop isn’t linked to a purchasable product yet — samples below are preview only.'
+                  : `Samples below are preview only — ${describeSellableSelectionReason(sellableSelection.reason)?.toLowerCase() ?? 'not yet available for purchase'}.`}
+              </div>
+            )}
+
             <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-6">
             {samples.map((sample) => {
-              const meta = getTemplateMeta(sample.render.template);
-              const displayPrice = Number(sample.render.template.config.base_price ?? meta.basePrice);
+              const priceLabel = formatStartingPrice(
+                sellableSelection.selection ? String(sellableSelection.selection.startingPrice) : null
+              );
               const imageUrl =
                 sample.render.outputImage ||
                 sample.render.outputImageUrl ||
@@ -902,18 +935,22 @@ export function Shop() {
                         </p>
                       </div>
                       <span className="text-lg font-display font-black text-white">
-                        ${displayPrice.toFixed(2)}
+                        {priceLabel ?? 'Unavailable'}
                       </span>
                     </div>
 
                     <button
                       type="button"
                       onClick={() => handleAddSampleToCart(sample)}
+                      disabled={!sellableSelection.selection}
+                      title={sellableSelection.selection ? undefined : describeSellableSelectionReason(sellableSelection.reason) ?? undefined}
                       className={cn(
                         'mt-5 w-full rounded-2xl px-4 py-3 text-[11px] font-black uppercase tracking-[0.24em] transition-all',
-                        addedSampleKey === sample.key
-                          ? 'bg-[#10b981] text-white'
-                          : 'bg-white text-cyber-black hover:bg-neon-pink hover:text-white'
+                        !sellableSelection.selection
+                          ? 'bg-white/5 text-gray-600 cursor-not-allowed opacity-50'
+                          : addedSampleKey === sample.key
+                            ? 'bg-[#10b981] text-white'
+                            : 'bg-white text-cyber-black hover:bg-neon-pink hover:text-white'
                       )}
                     >
                       {addedSampleKey === sample.key ? (

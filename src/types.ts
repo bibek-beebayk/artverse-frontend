@@ -188,7 +188,14 @@ export interface ActiveCustomization {
   templateShadowLayerUrl?: string | null;
   templateHighlightLayerUrl?: string | null;
   templateParts?: MockupTemplatePart[];
-  basePrice: number;
+  /** Display-only "starting estimate" resolved from the matched Product's server-computed
+   * `startingPrice` at the moment this customization was entered (see `validateSellableSelection`
+   * in Shop.tsx/Generator.tsx) — never a template/hardcoded fallback. Null when no sellable
+   * product+variant was resolved (e.g. a template-only preview) — purchase actions must stay
+   * disabled in that case, never show $0.00. Always label this "Starting estimate" in the UI;
+   * the authoritative price is computed server-side when the item is actually added to an
+   * authenticated cart. */
+  startingPrice: number | null;
   sizes: string[];
   colours: string[];
   basePlacement: PlacementOverride | null;
@@ -289,6 +296,12 @@ export interface CartItem {
   selectedSize: string;
   selectedColour: string;
   quantity: number;
+  /** Guest mode: a provisional estimate only — sourced from the matched Product's server-computed
+   * `startingPrice` at add-time (see `validateSellableSelection`), never a template/hardcoded
+   * value, and never presented as final (see `computeGuestCartTotals`'s "Not a final price"
+   * disclaimer on CartPage.tsx). Authenticated mode: display-only, mapped straight from the
+   * backend's own `unit_price` — the backend is what actually charges, this is never sent back
+   * as an authoritative price. */
   price: number;
   templateId?: number;
   backendRenderId?: number;
@@ -301,6 +314,14 @@ export interface CartItem {
   originalImageUrl?: string;
   partsConfig?: Record<string, PartCustomization>;
   designProjectId?: number;
+  /** Set when this (guest-mode) item was added from a real, validated `SellableSelection` — as
+   * opposed to a synthetic/recommendation item that never went through
+   * `validateSellableSelection`. Used at merge-into-account time to resolve the exact variant
+   * directly instead of falling back to fuzzy colour/size text matching (see `findMatchingVariant`
+   * in `lib/cartMerge.ts`). Guest-only bookkeeping — an authenticated cart item is always
+   * resolved server-side from its `designProjectId`, never from these. */
+  productId?: number;
+  variantId?: number;
   /** The backend CartItem's own primary key — only set once this item has been persisted to
    * the real backend cart (i.e. the user is signed in and this item has synced/merged). Guest
    * (localStorage-only) items never have this. Needed because `id` above is a client-generated
@@ -335,7 +356,10 @@ export type DesignProjectStatus = 'draft' | 'ready' | 'archived';
 
 export interface ProductVariant {
   id: number;
-  productId: number | null;
+  /** Always numeric — `ProductVariant.product` is a required FK on the backend, never null.
+   * If a response is ever missing this, api.ts's mapping fails clearly rather than silently
+   * coercing it to 0 or dropping the variant into an orphan-like state — see mapProductVariant. */
+  productId: number;
   templateId: number;
   sku: string;
   name: string;
@@ -348,10 +372,23 @@ export interface ProductVariant {
   price: string | null;
   baseCost?: string | null;
   /** Known physical stock quantity where supplied. Null means genuinely unknown stock (e.g. a
-   * print-on-demand variant) — never treat null as zero/out-of-stock; `isAvailable` is the
-   * actual sellability signal. */
+   * print-on-demand variant) — never treat null as zero/out-of-stock; `isSellable` (not this
+   * field, and not `isAvailable` alone) is the actual purchasability signal. */
   inventory: number | null;
+  /** Provider/catalogue availability only (can Printify/the admin supply this colour+size at
+   * all) — NOT the same as purchasable. A variant can be `isAvailable: true` and still not be
+   * `isSellable` (e.g. missing production cost). Never infer sellability from this field alone —
+   * use `isSellable` (and `validateSellableSelection` for a full product+variant check). */
   isAvailable: boolean;
+  /** Full commercial readiness — available AND priced AND matched to the product's template AND
+   * validly provider-mapped where a provider is claimed. The one field to check before allowing
+   * a purchase action; mirrors the backend's `apps.shop.services.variant_is_sellable`. */
+  isSellable: boolean;
+  /** Narrower than `isSellable` — specifically whether a production cost (`baseCost`) is
+   * configured. Lets the UI show a distinct "Pricing not configured" reason instead of a generic
+   * "unavailable" when that's specifically what's missing. Absent (not just false) is treated as
+   * NOT ready — see mapProductVariant's conservative fallback. */
+  pricingReady?: boolean;
   supportedPrintAreas: string[];
   externalProvider?: string;
   externalVariantId?: string;

@@ -9,6 +9,8 @@ import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 import { cn } from '../lib/utils.ts';
 import { ImageModal, SmartImage } from '../components/Common.tsx';
 import { createMockupRender, getMockupTemplates, getProducts } from '../lib/api.ts';
+import { formatStartingPrice } from '../lib/pricing.ts';
+import { describeSellableSelectionReason, validateSellableSelection } from '../lib/sellableSelection.ts';
 
 const ASPECT_RATIO_OPTIONS = [
   { value: '1:1', label: 'Square' },
@@ -18,10 +20,13 @@ const ASPECT_RATIO_OPTIONS = [
   { value: '9:16', label: 'Story' },
 ] as const;
 
+// Deliberately no price here — see the matching note in Shop.tsx's TEMPLATE_META. This table
+// only feeds preview layout (print-area label, recommended badge, fallback sizes/colours for a
+// template with no product yet); actual selling price always comes from
+// lib/sellableSelection.ts's validateSellableSelection, never from this map.
 const TEMPLATE_META: Record<
   string,
   {
-    basePrice: number;
     printArea: string;
     isRecommended: boolean;
     fallbackSizes: string[];
@@ -29,49 +34,42 @@ const TEMPLATE_META: Record<
   }
 > = {
   tshirt: {
-    basePrice: 29.99,
     printArea: 'Center Chest Print',
     isRecommended: true,
     fallbackSizes: ['S', 'M', 'L', 'XL', 'XXL'],
     fallbackColours: ['Midnight Black', 'Cyber White', 'Ash Grey'],
   },
   hoodie: {
-    basePrice: 49.99,
     printArea: 'Mid-Chest Print',
     isRecommended: false,
     fallbackSizes: ['S', 'M', 'L', 'XL', 'XXL'],
     fallbackColours: ['Midnight Black', 'Cyber White', 'Heather Grey'],
   },
   mug: {
-    basePrice: 18,
     printArea: 'Wrap Print Area',
     isRecommended: false,
     fallbackSizes: ['11oz', '15oz'],
     fallbackColours: ['Classic Pearl', 'Cyber Black'],
   },
   canvas: {
-    basePrice: 45,
     printArea: 'Full Canvas Wrap',
     isRecommended: true,
     fallbackSizes: ['12" x 12"', '18" x 18"', '24" x 24"'],
     fallbackColours: ['Museum Frame', 'Cyber Matte Black'],
   },
   poster: {
-    basePrice: 24.99,
     printArea: 'Borderless Poster Print',
     isRecommended: false,
     fallbackSizes: ['12" x 18"', '18" x 24"', '24" x 36"'],
     fallbackColours: ['Glossy Finish', 'Retro Matte'],
   },
   phone_case: {
-    basePrice: 14.99,
     printArea: 'Full Case Wrap',
     isRecommended: false,
     fallbackSizes: ['iPhone 15 Pro', 'Samsung S24 Ultra'],
     fallbackColours: ['Crystal Clear', 'Matte Shockproof'],
   },
   tote_bag: {
-    basePrice: 22,
     printArea: 'Front Tote Print',
     isRecommended: false,
     fallbackSizes: ['Standard Organic'],
@@ -82,7 +80,6 @@ const TEMPLATE_META: Record<
 function getTemplateMeta(template: MockupTemplate) {
   return (
     TEMPLATE_META[template.productType] || {
-      basePrice: 24.99,
       printArea: template.description || 'Configured Print Area',
       isRecommended: false,
       fallbackSizes: ['Standard'],
@@ -227,13 +224,21 @@ export function Generator() {
   const mockupProducts = mockupTemplates.map((template) => {
     const render = mockupRenders[template.id];
     const meta = getTemplateMeta(template);
+    const matchedProduct = storefrontProducts.find((product) => product.mockupTemplateId === template.id) ?? null;
+    const defaultVariant =
+      matchedProduct?.variants?.find((variant) => variant.isAvailable && variant.isSellable) ?? null;
+    // The one guard for every purchasable action on this card (Quick Grab, Specs Setup, the
+    // price badge) — a template with no resolved, sellable Product+ProductVariant stays
+    // preview-only. See lib/sellableSelection.ts.
+    const sellableSelection = validateSellableSelection(matchedProduct, defaultVariant);
     return {
       templateId: template.id,
       renderId: render?.id,
       productType: template.productTypeDisplay,
       productKey: template.productType,
       mockupImageUrl: render?.outputImage || render?.outputImageUrl || template.baseImage || generatedImage || '',
-      basePrice: Number(template.config.base_price ?? meta.basePrice),
+      matchedProduct,
+      sellableSelection,
       sizes: template.supportedSizes.length > 0 ? template.supportedSizes : meta.fallbackSizes,
       colours: template.supportedColors.length > 0 ? template.supportedColors : meta.fallbackColours,
       printArea: String(template.config.print_area ?? template.description ?? meta.printArea),
@@ -259,7 +264,12 @@ export function Generator() {
         templateId: product.templateId,
         productType: product.productType,
         mockupImageUrl: product.mockupImageUrl || selectedDesign.imageUrl,
-        basePrice: product.basePrice,
+        // Real, server-derived starting price when a sellable product+variant was resolved for
+        // this template; 0 otherwise. Never a template/hardcoded fallback. Not itself rendered
+        // as a price anywhere today (see getRecommendations in CartContext.tsx, which only reads
+        // mockupImageUrl off this record) — kept honest regardless, since this is exported data
+        // a future caller could reasonably read as a price.
+        basePrice: product.sellableSelection.selection?.startingPrice ?? 0,
         sizes: [...product.sizes],
         colours: [...product.colours],
         printArea: product.printArea,
@@ -270,7 +280,11 @@ export function Generator() {
 
   const handleQuickGrab = (product: (typeof mockupProducts)[number]) => {
     if (!selectedDesign) return;
+    // A template with no resolved, sellable Product+ProductVariant is preview-only — it must
+    // never reach the cart. See lib/sellableSelection.ts.
+    if (!product.sellableSelection.selection) return;
 
+    const { variant, startingPrice } = product.sellableSelection.selection;
     const artworkId = selectedDesign.id;
     const cartItemId = `cart-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
 
@@ -280,10 +294,14 @@ export function Generator() {
       sourceArtworkId: selectedDesign.sourceArtworkId,
       productType: product.productType,
       mockupImageUrl: product.mockupImageUrl,
-      selectedSize: product.sizes[0] ?? 'Standard',
-      selectedColour: product.colours[0] ?? 'Default',
+      selectedSize: variant.size,
+      selectedColour: variant.colorName,
       quantity: 1,
-      price: product.basePrice,
+      // A provisional guest-mode estimate from the validated sellable selection — never the
+      // template's config price.
+      price: startingPrice,
+      productId: variant.productId,
+      variantId: variant.id,
       templateId: product.templateId,
       backendRenderId: product.renderId,
       placementOverride: mockupRenders[product.templateId]?.placementOverride || undefined,
@@ -663,7 +681,11 @@ export function Generator() {
                       )}
 
                       <span className="absolute bottom-3 right-3 bg-cyber-black/80 text-gray-400 text-[8px] font-mono uppercase tracking-widest px-2 py-0.5 rounded border border-white/5">
-                        ${product.basePrice.toFixed(2)}
+                        {formatStartingPrice(
+                          product.sellableSelection.selection
+                            ? String(product.sellableSelection.selection.startingPrice)
+                            : null
+                        ) ?? 'Unavailable'}
                       </span>
                     </div>
 
@@ -682,9 +704,11 @@ export function Generator() {
                           className="text-center py-2 text-[9px] font-extrabold uppercase tracking-widest border border-white/10 hover:border-white text-gray-300 hover:text-white rounded-lg transition-all cursor-pointer"
                           onClick={() => {
                             const matchedTemplate = mockupTemplates.find((template) => template.id === product.templateId);
-                            const matchedProduct = storefrontProducts.find(
-                              (storefrontProduct) => storefrontProduct.mockupTemplateId === product.templateId
-                            );
+                            const matchedProduct = product.matchedProduct;
+                            // Entering the customization editor stays allowed even without a
+                            // resolved sellable product — see the matching note in Shop.tsx's
+                            // handleOpenSpecsSetup. Customization.tsx independently disables its
+                            // own Add-to-Cart CTA whenever it doesn't resolve a sellable selection.
                             const customization: ActiveCustomization = {
                               artworkId: selectedDesign.id,
                               sourceArtworkId: selectedDesign.sourceArtworkId,
@@ -700,7 +724,7 @@ export function Generator() {
                               templateShadowLayerUrl: matchedTemplate?.shadowLayer,
                               templateHighlightLayerUrl: matchedTemplate?.highlightLayer,
                               templateParts: matchedTemplate?.parts,
-                              basePrice: product.basePrice,
+                              startingPrice: product.sellableSelection.selection?.startingPrice ?? null,
                               sizes:
                                 matchedProduct?.availableSizes && matchedProduct.availableSizes.length > 0
                                   ? matchedProduct.availableSizes
@@ -723,12 +747,19 @@ export function Generator() {
                         <button
                           className={cn(
                             'text-center py-2 text-[9px] font-black uppercase tracking-widest rounded-lg transition-all cursor-pointer',
-                            isAdded
-                              ? 'bg-[#10b981] text-white'
-                              : 'bg-white text-cyber-black hover:bg-neon-blue hover:text-white'
+                            !product.sellableSelection.selection
+                              ? 'bg-white/5 text-gray-600 cursor-not-allowed opacity-50'
+                              : isAdded
+                                ? 'bg-[#10b981] text-white'
+                                : 'bg-white text-cyber-black hover:bg-neon-blue hover:text-white'
                           )}
                           onClick={() => handleQuickGrab(product)}
-                          disabled={isAdded || isProcessing || !product.mockupImageUrl}
+                          title={
+                            product.sellableSelection.selection
+                              ? undefined
+                              : describeSellableSelectionReason(product.sellableSelection.reason) ?? undefined
+                          }
+                          disabled={isAdded || isProcessing || !product.mockupImageUrl || !product.sellableSelection.selection}
                         >
                           {isProcessing ? 'Rendering' : isAdded ? 'Added!' : 'Quick Grab'}
                         </button>
