@@ -3088,20 +3088,21 @@ export function Customization() {
             )}
             </div>
 
-            {/* Quality & Delivery Assurance badges */}
+            {/* Production readiness notes — deliberately no shipping/refund promises here.
+                Real checkout, shipping and fulfilment aren't built yet (see CartPage.tsx). */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pb-8 border-b border-white/5">
               <div className="flex items-start gap-3 bg-white/5 p-4 rounded-xl">
                 <Truck className="text-neon-blue mt-0.5" size={16} />
                 <div>
-                  <p className="text-[9px] font-bold uppercase tracking-wider text-white">Rapid Transit Shipped</p>
-                  <p className="text-[8px] text-gray-500 uppercase tracking-widest mt-0.5">Delivered in 4-6 business days with tracking.</p>
+                  <p className="text-[9px] font-bold uppercase tracking-wider text-white">Shipping Coming Soon</p>
+                  <p className="text-[8px] text-gray-500 uppercase tracking-widest mt-0.5">Shipping and delivery aren't available yet.</p>
                 </div>
               </div>
               <div className="flex items-start gap-3 bg-white/5 p-4 rounded-xl">
                 <ShieldCheck className="text-neon-pink mt-0.5" size={16} />
                 <div>
-                  <p className="text-[9px] font-bold uppercase tracking-wider text-white">Fulfillment Quality Guard</p>
-                  <p className="text-[8px] text-gray-500 uppercase tracking-widest mt-0.5">Defect replacements guaranteed or money refunded.</p>
+                  <p className="text-[9px] font-bold uppercase tracking-wider text-white">Production File Ready</p>
+                  <p className="text-[8px] text-gray-500 uppercase tracking-widest mt-0.5">Transparent, full-resolution files for future fulfilment.</p>
                 </div>
               </div>
             </div>

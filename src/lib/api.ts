@@ -1135,6 +1135,7 @@ interface BackendCartItem {
   preview_image_url: string;
   line_total: string;
   pricing_breakdown: Record<string, unknown>;
+  warnings: string[];
   created_at: string;
   updated_at: string;
 }
@@ -1155,6 +1156,7 @@ interface BackendCart {
   tax_amount: string;
   shipping_amount: string;
   total: string;
+  is_checkout_ready: boolean;
   updated_at: string;
 }
 
@@ -1168,6 +1170,10 @@ export interface CartApiResult {
   items: CartItem[];
   totals: CartTotals;
   coupon: CartCouponSummary | null;
+  /** False whenever any item has a pricing/availability warning (see `CartItem.warnings`) —
+   * distinct from whether checkout is actually *implemented* at all (it isn't yet; see
+   * `lib/cartReadiness.ts`). This only ever reflects the backend's own validation. */
+  isCheckoutReady: boolean;
 }
 
 function mapBackendCartItem(item: BackendCartItem): CartItem {
@@ -1185,6 +1191,7 @@ function mapBackendCartItem(item: BackendCartItem): CartItem {
     selectedColour: item.colour,
     quantity: item.quantity,
     price: Number(item.unit_price),
+    warnings: item.warnings,
   };
 }
 
@@ -1202,6 +1209,7 @@ function mapCart(cart: BackendCart): CartApiResult {
     coupon: cart.coupon
       ? { code: cart.coupon.code, discountType: cart.coupon.discount_type, amount: cart.coupon.amount }
       : null,
+    isCheckoutReady: cart.is_checkout_ready,
   };
 }
 

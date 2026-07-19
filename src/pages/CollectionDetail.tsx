@@ -549,7 +549,7 @@ export function CollectionDetail() {
                     ) : cartAdded ? (
                       <>
                         <Check size={14} />
-                        Fulfillment Added!
+                        Added to Cart!
                       </>
                     ) : (
                       <>

@@ -15,12 +15,14 @@ import {
 } from '../lib/api.ts';
 import { buildDesignProjectInputForGuestItem, findMatchingVariant } from '../lib/cartMerge.ts';
 import { computeGuestCartTotals } from '../lib/cartPricing.ts';
+import { computeCartReadiness, type CartReadiness } from '../lib/cartReadiness.ts';
 
 const EMPTY_TOTALS: CartTotals = { subtotal: 0, discountAmount: 0, taxAmount: 0, shippingAmount: 0, total: 0, currency: 'USD' };
 
 interface CartContextType {
   cart: CartItem[];
   cartTotals: CartTotals;
+  cartReadiness: CartReadiness;
   couponCode: string | null;
   cartCouponError: string | null;
   isCartSyncing: boolean;
@@ -177,6 +179,9 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
   const cart = user ? backendCart?.items ?? [] : guestCart;
   const cartTotals: CartTotals = user ? backendCart?.totals ?? EMPTY_TOTALS : computeGuestCartTotals(guestCart);
   const couponCode = user ? backendCart?.coupon?.code ?? null : null;
+  // Guest carts have no server-side pricing validation to report (null) — computeCartReadiness
+  // treats that as "nothing to warn about yet", not as a pass/fail signal either way.
+  const cartReadiness = computeCartReadiness(cart, user ? backendCart?.isCheckoutReady ?? null : null);
 
   const addToCart = useCallback(
     (newItem: CartItem) => {
@@ -396,6 +401,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     () => ({
       cart,
       cartTotals,
+      cartReadiness,
       couponCode,
       cartCouponError,
       isCartSyncing,
@@ -415,6 +421,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     [
       cart,
       cartTotals,
+      cartReadiness,
       couponCode,
       cartCouponError,
       isCartSyncing,

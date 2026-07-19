@@ -6,17 +6,11 @@ import { Link } from 'react-router-dom';
 import {
   ShoppingBag,
   Trash2,
-  ArrowRight,
   Plus,
   Minus,
-  Sparkles,
-  CheckCircle,
   Tag,
-  Heart,
-  Printer,
-  ChevronRight,
+  AlertTriangle,
   PlusCircle,
-  Clock,
   Eye,
   X
 } from 'lucide-react';
@@ -27,6 +21,7 @@ export function CartPage() {
   const {
     cart,
     cartTotals,
+    cartReadiness,
     couponCode,
     cartCouponError,
     isCartSyncing,
@@ -39,8 +34,6 @@ export function CartPage() {
     removeCartCoupon,
   } = useCart();
   const { user } = useAuth();
-  const [checkoutSimulated, setCheckoutSimulated] = useState(false);
-  const [checkoutSuccess, setCheckoutSuccess] = useState(false);
   const [pendingDeleteItemId, setPendingDeleteItemId] = useState<string | null>(null);
   const [pollingRenderIds, setPollingRenderIds] = useState<Set<number>>(new Set());
   const [previewImage, setPreviewImage] = useState<string | null>(null);
@@ -49,6 +42,7 @@ export function CartPage() {
   // Always the server-computed totals in backend (signed-in) mode — never re-derived here. Guest
   // mode falls back to a client-side estimate (see computeGuestCartTotals) since a guest cart is
   // never persisted/priced server-side. See TODO.md item 27 / apps.cart.pricing on the backend.
+  // Neither is a final, payable amount yet — see the disabled checkout control below.
   const { subtotal, discountAmount, shippingAmount: shipping, total } = cartTotals;
   const pendingDeleteItem = cart.find((item) => item.id === pendingDeleteItemId) ?? null;
 
@@ -115,14 +109,6 @@ export function CartPage() {
     return () => clearInterval(interval);
   }, [pollingRenderIds, cart, updateCartItem]);
 
-  const handleCheckout = () => {
-    setCheckoutSimulated(true);
-    setTimeout(() => {
-      setCheckoutSimulated(false);
-      setCheckoutSuccess(true);
-    }, 1800);
-  };
-
   const handleQuickAddUpsell = (rec: ReturnType<typeof getRecommendations>[0]) => {
     const mockupId = `cart-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     addToCart({
@@ -156,33 +142,6 @@ export function CartPage() {
     setPendingDeleteItemId(null);
   };
 
-  if (checkoutSuccess) {
-    return (
-      <div className="max-w-3xl mx-auto px-6 py-32 text-center text-white">
-        <div className="w-20 h-20 rounded-full bg-neon-purple/20 border border-neon-purple flex items-center justify-center text-neon-purple mx-auto mb-8 animate-bounce">
-          <CheckCircle size={40} />
-        </div>
-        <h1 className="text-4xl font-display font-black uppercase tracking-widest mb-4">Transmission Successful!</h1>
-        <p className="text-xs text-gray-400 max-w-sm mx-auto uppercase tracking-wider mb-6 leading-relaxed">
-          Your print orders are successfully scheduled on the Printify queue nodes. Render processing starting instantly.
-        </p>
-        <div className="bg-white/5 border border-white/10 rounded-2xl p-6 text-left mb-8 space-y-3">
-          <div className="flex justify-between text-xs font-mono uppercase text-gray-400">
-            <span>Fulfillment ID</span>
-            <span className="text-white">ORD-{Math.floor(Math.random() * 900000 + 100000)}</span>
-          </div>
-          <div className="flex justify-between text-xs font-mono uppercase text-gray-400">
-            <span>Estimated Dispatch</span>
-            <span className="text-neon-blue font-bold">2-3 Decades... Just kidding, 4-6 business days</span>
-          </div>
-        </div>
-        <Link to="/generator" className="inline-flex items-center gap-2 px-8 py-4 bg-white text-cyber-black font-black uppercase tracking-widest rounded-xl hover:bg-neon-blue hover:text-white transition-all">
-          Generate New Vision
-        </Link>
-      </div>
-    );
-  }
-
   if (cart.length === 0) {
     return (
       <div className="max-w-7xl mx-auto px-6 py-32 text-center text-white">
@@ -205,7 +164,7 @@ export function CartPage() {
     <div className="bg-cyber-black text-white min-h-screen py-12">
       <div className="max-w-7xl mx-auto px-6">
         <header className="mb-12">
-          <span className="text-[10px] font-mono tracking-[0.4em] text-neon-pink uppercase mb-2 block">Secure Marketplace Checkout</span>
+          <span className="text-[10px] font-mono tracking-[0.4em] text-neon-pink uppercase mb-2 block">Review Your Cart</span>
           <h1 className="text-4xl md:text-5xl font-display font-extrabold uppercase tracking-widest">
             Shopping <span className="italic font-light">Envelope</span>
           </h1>
@@ -290,6 +249,20 @@ export function CartPage() {
                         </span>
                       )}
                     </div>
+
+                    {item.warnings && item.warnings.length > 0 && (
+                      <div className="mt-3 space-y-1">
+                        {item.warnings.map((warning, warningIdx) => (
+                          <p
+                            key={warningIdx}
+                            className="flex items-start gap-1.5 text-[9px] normal-case tracking-normal text-amber-400"
+                          >
+                            <AlertTriangle size={11} className="mt-0.5 shrink-0" />
+                            {warning}
+                          </p>
+                        ))}
+                      </div>
+                    )}
                   </div>
 
                   {/* Quantity Actions / Prices */}
@@ -402,11 +375,11 @@ export function CartPage() {
 
           </div>
 
-          {/* Checkout Checkout summary */}
+          {/* Order summary */}
           <div className="space-y-6">
             <div className="glass-card p-8 border-white/5 space-y-6 lg:sticky lg:top-28">
-              <h3 className="text-xl font-display font-bold uppercase tracking-wider text-white">Fulfillment Invoice</h3>
-              
+              <h3 className="text-xl font-display font-bold uppercase tracking-wider text-white">Order Summary</h3>
+
               <div className="space-y-3 font-mono text-xs uppercase text-gray-400">
                 <div className="flex justify-between pb-3 border-b border-white/5">
                   <span>Subtotal</span>
@@ -419,21 +392,24 @@ export function CartPage() {
                   </div>
                 )}
                 <div className="flex justify-between pb-3 border-b border-white/5">
-                  <span>Transit Cargo</span>
+                  <span>Shipping</span>
                   <span className="text-white font-bold">
                     {shipping === 0 ? <span className="text-[#10b981]">Free</span> : `$${shipping.toFixed(2)}`}
                   </span>
                 </div>
                 {!user && shipping > 0 && (
                   <p className="text-[8px] tracking-widest text-right text-neon-blue">
-                    Spend ${(50 - subtotal).toFixed(2)} more for free transit!
+                    Spend ${(50 - subtotal).toFixed(2)} more for free shipping!
                   </p>
                 )}
 
                 <div className="flex justify-between text-base uppercase text-white font-bold pt-4">
-                  <span className="text-sm font-display font-black tracking-widest">Total Invoice</span>
+                  <span className="text-sm font-display font-black tracking-widest">Estimated Total</span>
                   <span className="text-xl font-display font-black text-neon-blue">${total.toFixed(2)}</span>
                 </div>
+                <p className="text-[8px] normal-case tracking-normal text-gray-500">
+                  Not a final price — checkout, payment and order fulfilment aren't available yet.
+                </p>
               </div>
 
               {/* Coupon code — signed-in accounts only, since coupons are validated against the
@@ -480,40 +456,30 @@ export function CartPage() {
                 </div>
               )}
 
-              {/* Secure Checkout details */}
-              <div className="p-4 bg-white/5 rounded-xl text-[9px] text-[#9ca3af] uppercase leading-relaxed space-y-2">
-                <div className="flex items-center gap-2 text-white font-bold text-[10px]">
-                  <Printer size={12} className="text-neon-purple shrink-0" />
-                  Printify Routing Node Enabled
-                </div>
-                <p>We transmit custom vectors dynamically to localized Printify nodes across clean energy print lines.</p>
-              </div>
-
-              <button
-                onClick={handleCheckout}
-                disabled={checkoutSimulated}
-                className="w-full flex items-center justify-center gap-2 py-4 bg-white hover:bg-neon-blue text-cyber-black hover:text-white rounded-xl text-xs font-black uppercase tracking-widest transition-all duration-300"
-              >
-                {checkoutSimulated ? (
-                  <>
-                    <span className="w-4 h-4 border-2 border-cyber-black border-t-transparent rounded-full animate-spin" />
-                    Completing secure payment...
-                  </>
-                ) : (
-                  <>
-                    Proceed to Transit Node
-                    <ArrowRight size={14} />
-                  </>
+              {/* Honest, non-functional checkout control — real checkout/payment/fulfilment
+                  isn't built yet (see TODO.md Section 5). This button must never trigger
+                  payment, clear the cart, generate an order id, or call Printify — it's
+                  intentionally inert. cartReadiness.isCheckoutImplemented is hard-coded false
+                  for this reason; only isCheckoutReady (no pricing/availability warnings) is
+                  actually computed. */}
+              <div className="space-y-2">
+                <button
+                  type="button"
+                  disabled
+                  aria-disabled="true"
+                  title="Payment and order fulfilment are not available yet."
+                  className="w-full flex items-center justify-center gap-2 py-4 bg-white/10 text-gray-500 rounded-xl text-xs font-black uppercase tracking-widest cursor-not-allowed border border-white/5"
+                >
+                  Checkout Coming Soon
+                </button>
+                <p className="text-center text-[9px] uppercase tracking-widest text-gray-500">
+                  {cartReadiness.reasonMessage} Payment and order fulfilment are not available yet.
+                </p>
+                {cartReadiness.warningMessage && (
+                  <p className="flex items-center justify-center gap-1.5 text-center text-[9px] uppercase tracking-widest text-amber-400">
+                    <AlertTriangle size={11} /> {cartReadiness.warningMessage}
+                  </p>
                 )}
-              </button>
-
-              <div className="flex items-center justify-center gap-4 text-[9px] font-mono text-gray-600 uppercase">
-                <span className="flex items-center gap-1">
-                  <Clock size={10} />
-                  Fulfillment: ~4 Days
-                </span>
-                <span>•</span>
-                <span>Refundable runs</span>
               </div>
             </div>
           </div>

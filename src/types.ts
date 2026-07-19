@@ -297,6 +297,13 @@ export interface CartItem {
    * string used for both guest and backend-mode React keys/dedup, while removeFromCart/
    * updateCartQuantity need the real numeric backend id to call the cart API. */
   backendCartItemId?: number;
+  /** Server-side pricing/availability warnings for this specific item (e.g. no production cost
+   * configured, or the variant is no longer available) — see `apps.cart.pricing.price_item()`'s
+   * warnings on the backend. Empty/undefined means no known issue. Guest (localStorage-only)
+   * items never have this — there's no server-side pricing to validate against. A non-empty
+   * list means this item is not checkout-ready; see `computeCartReadiness` in
+   * `lib/cartReadiness.ts`. */
+  warnings?: string[];
 }
 
 /** Server-computed cart totals (TODO.md item 27's pricing engine output) — always trust these

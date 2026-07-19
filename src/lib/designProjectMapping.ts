@@ -35,7 +35,7 @@ export function mapPartCustomizationToPlacement(partName: string, part: PartCust
  * render ID or preview URL, partNeedsRender() below still catches that independently of
  * isDirty, so this doesn't risk skipping a part that genuinely needs rendering. */
 export function mapPlacementToPartCustomization(placement: DesignPlacement): PartCustomization {
-  return {
+  const part: PartCustomization = {
     sourceArtworkId: placement.sourceArtworkId ?? undefined,
     sourceGeneratedImageId: placement.sourceGeneratedImageId ?? undefined,
     imageUrl: placement.sourceImageUrl || undefined,
@@ -46,11 +46,16 @@ export function mapPlacementToPartCustomization(placement: DesignPlacement): Par
     mockupImageUrl: placement.previewUrl || undefined,
     backendRenderId: placement.previewRenderId ?? undefined,
     printFileUrl: placement.printFileUrl || undefined,
-    // A part reopened from a saved project is exactly what's currently on the server, so its
-    // production file (if any) is not stale relative to what's in the editor right now.
-    isPrintFileStale: false,
     isDirty: false,
   };
+  // A part reopened with a print file already on it is exactly what's currently on the server,
+  // so it's not stale relative to what's in the editor right now. A part with printable content
+  // (artwork or text) but NO print file — e.g. one that's never been generated yet, or a
+  // duplicated project's placement, which deliberately never inherits the source placement's
+  // print file (see DesignProjectDuplicateView on the backend) — needs generation, so it's
+  // treated as stale. A genuinely empty part has nothing to generate either way.
+  part.isPrintFileStale = !part.printFileUrl && isPartConfigured(part);
+  return part;
 }
 
 /** Reopening a saved project: DesignProject -> the editor's ActiveCustomization + partsConfig. */
