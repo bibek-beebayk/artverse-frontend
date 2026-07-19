@@ -439,21 +439,30 @@ export const PRODUCTS: Product[] = [
     id: 'p1',
     name: 'Neon Nexus Megacity Oversized T-Shirt',
     category: 'T-shirts',
-    price: '$39.99',
+    startingPrice: '39.99',
+    isAvailable: true,
+    availableVariantCount: 1,
+    totalVariantCount: 1,
     imageUrl: 'https://images.unsplash.com/photo-1521572267360-ee0c2909d518?auto=format&fit=crop&q=80&w=800'
   },
   {
     id: 'p2',
     name: 'Nebula Sovereign Cathedral Canvas Print',
     category: 'Posters',
-    price: '$45.00',
+    startingPrice: '45.00',
+    isAvailable: true,
+    availableVariantCount: 1,
+    totalVariantCount: 1,
     imageUrl: 'https://images.unsplash.com/photo-1541963463532-d68292c34b19?auto=format&fit=crop&q=80&w=800'
   },
   {
     id: 'p3',
     name: 'Spheres of Premium Silence Ceramic Mug',
     category: 'Mugs',
-    price: '$18.00',
+    startingPrice: '18.00',
+    isAvailable: true,
+    availableVariantCount: 1,
+    totalVariantCount: 1,
     imageUrl: 'https://images.unsplash.com/photo-1572113173140-5152ee53f8af?auto=format&fit=crop&q=80&w=800'
   }
 ];

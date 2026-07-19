@@ -64,11 +64,13 @@ interface BackendProduct {
   slug: string;
   category: BackendCategory;
   description: string;
-  price: string;
+  starting_price: string | null;
+  is_available: boolean;
+  available_variant_count: number;
+  total_variant_count: number;
   image: string | null;
   thumbnail: string | null;
   image_url: string;
-  inventory: number;
   is_active: boolean;
   mockup_template_id: number | null;
   variants: BackendProductVariant[];
@@ -103,7 +105,7 @@ interface BackendProductVariant {
   size: string;
   price: string | null;
   base_cost: string | null;
-  inventory: number;
+  inventory: number | null;
   is_available: boolean;
   supported_print_areas: string[];
   external_provider: string;
@@ -420,14 +422,16 @@ function mapVideoClip(video: BackendVideoClip): VideoClip {
 }
 
 function mapProduct(product: BackendProduct): Product {
-  const price = Number(product.price);
   const imageUrl = resolveAssetUrl(product.image) || product.image_url;
   const thumbnailUrl = resolveAssetUrl(product.thumbnail) || imageUrl;
   return {
     id: String(product.id),
     name: product.name,
     category: product.category.name,
-    price: Number.isNaN(price) ? product.price : `$${price.toFixed(2)}`,
+    startingPrice: product.starting_price,
+    isAvailable: product.is_available,
+    availableVariantCount: product.available_variant_count,
+    totalVariantCount: product.total_variant_count,
     imageUrl,
     thumbnailUrl,
     description: product.description,

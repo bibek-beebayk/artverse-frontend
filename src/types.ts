@@ -50,7 +50,17 @@ export interface Product {
   id: string;
   name: string;
   category: string;
-  price: string;
+  /** Derived server-side from the cheapest valid (available, priced, product/template-matched)
+   * variant — `base_cost + markup`, same formula the cart pricing engine uses. Null when the
+   * product has no such variant yet (shouldn't normally be publicly visible in that state, but
+   * treat null honestly — e.g. "Currently unavailable" — never show `$0.00` as a fallback). */
+  startingPrice: string | null;
+  /** True when at least one variant is sellable (available, priced, and matched to this
+   * product's template). Mirrors `apps.shop.services.product_has_sellable_variant` on the
+   * backend — don't re-derive this from `variants` client-side. */
+  isAvailable: boolean;
+  availableVariantCount: number;
+  totalVariantCount: number;
   imageUrl: string;
   thumbnailUrl?: string;
   description?: string;
@@ -332,9 +342,15 @@ export interface ProductVariant {
   colorName: string;
   colorHex: string;
   size: string;
+  /** Admin reference/display price only — NOT what the cart charges. See `Product.startingPrice`
+   * / the cart's server-computed `unit_price` for actual pricing; never use this field to
+   * display or compute a charge. */
   price: string | null;
   baseCost?: string | null;
-  inventory: number;
+  /** Known physical stock quantity where supplied. Null means genuinely unknown stock (e.g. a
+   * print-on-demand variant) — never treat null as zero/out-of-stock; `isAvailable` is the
+   * actual sellability signal. */
+  inventory: number | null;
   isAvailable: boolean;
   supportedPrintAreas: string[];
   externalProvider?: string;
