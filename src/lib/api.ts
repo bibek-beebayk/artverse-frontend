@@ -1,5 +1,7 @@
 import type {
   Artwork,
+  CartItem,
+  CartTotals,
   CollectionSummary,
   CropOverride,
   DesignPlacement,
@@ -1104,4 +1106,155 @@ export async function generatePrintFiles(projectId: number) {
 export async function getPrintFiles(projectId: number) {
   const result = await fetchJson<BackendPrintFileBatchResult>(`/generator/design-projects/${projectId}/print-files/`);
   return mapPrintFileBatchResult(result);
+}
+
+// --- Backend-persisted cart (TODO.md items 25-29) ---
+//
+// Only ever used once a user is signed in — guest carts stay entirely client-side in
+// localStorage (see CartContext.tsx) and never call any of these. `unit_price`/the cart totals
+// below are always server-computed by apps.cart.pricing; nothing here ever sends a price to
+// the backend, only IDs/quantities.
+
+interface BackendCartItemProduct {
+  id: number;
+  name: string;
+  slug: string;
+  image_url: string;
+}
+
+interface BackendCartItem {
+  id: number;
+  design_project: BackendDesignProjectSummary;
+  product: BackendCartItemProduct;
+  variant_id: number | null;
+  size: string;
+  colour: string;
+  quantity: number;
+  unit_price: string;
+  currency: string;
+  preview_image_url: string;
+  line_total: string;
+  pricing_breakdown: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+interface BackendCartCoupon {
+  code: string;
+  discount_type: string;
+  amount: string;
+}
+
+interface BackendCart {
+  id: number;
+  currency: string;
+  items: BackendCartItem[];
+  coupon: BackendCartCoupon | null;
+  subtotal: string;
+  discount_amount: string;
+  tax_amount: string;
+  shipping_amount: string;
+  total: string;
+  updated_at: string;
+}
+
+export interface CartCouponSummary {
+  code: string;
+  discountType: string;
+  amount: string;
+}
+
+export interface CartApiResult {
+  items: CartItem[];
+  totals: CartTotals;
+  coupon: CartCouponSummary | null;
+}
+
+function mapBackendCartItem(item: BackendCartItem): CartItem {
+  const projectSummary = mapDesignProjectSummary(item.design_project);
+  return {
+    id: `backend-${item.id}`,
+    backendCartItemId: item.id,
+    designProjectId: projectSummary.id,
+    // Guest-mode items key upsell/dedup logic off a generated-artwork id; a backend item has no
+    // such concept, so the design project's own id doubles as a stable per-item key here.
+    generatedArtworkId: String(projectSummary.id),
+    productType: item.product.name,
+    mockupImageUrl: projectSummary.displayThumbnailUrl || resolveAssetUrl(item.preview_image_url) || item.product.image_url,
+    selectedSize: item.size,
+    selectedColour: item.colour,
+    quantity: item.quantity,
+    price: Number(item.unit_price),
+  };
+}
+
+function mapCart(cart: BackendCart): CartApiResult {
+  return {
+    items: cart.items.map(mapBackendCartItem),
+    totals: {
+      subtotal: Number(cart.subtotal),
+      discountAmount: Number(cart.discount_amount),
+      taxAmount: Number(cart.tax_amount),
+      shippingAmount: Number(cart.shipping_amount),
+      total: Number(cart.total),
+      currency: cart.currency,
+    },
+    coupon: cart.coupon
+      ? { code: cart.coupon.code, discountType: cart.coupon.discount_type, amount: cart.coupon.amount }
+      : null,
+  };
+}
+
+export async function getCart() {
+  return mapCart(await fetchJson<BackendCart>("/cart/"));
+}
+
+export async function addCartItem(input: { designProjectId: number; quantity?: number }) {
+  return mapCart(
+    await sendJson<BackendCart>("/cart/items/", {
+      method: "POST",
+      body: JSON.stringify({ design_project_id: input.designProjectId, quantity: input.quantity ?? 1 }),
+    })
+  );
+}
+
+export async function updateCartItemQuantity(itemId: number, quantity: number) {
+  return mapCart(
+    await sendJson<BackendCart>(`/cart/items/${itemId}/`, {
+      method: "PATCH",
+      body: JSON.stringify({ quantity }),
+    })
+  );
+}
+
+export async function removeCartItem(itemId: number) {
+  return mapCart(await sendJson<BackendCart>(`/cart/items/${itemId}/`, { method: "DELETE" }));
+}
+
+export async function applyCoupon(code: string) {
+  return mapCart(await sendJson<BackendCart>("/cart/coupon/", { method: "POST", body: JSON.stringify({ code }) }));
+}
+
+export async function removeCoupon() {
+  return mapCart(await sendJson<BackendCart>("/cart/coupon/", { method: "DELETE" }));
+}
+
+interface MergeGuestCartResult {
+  merged: number;
+  errors: { design_project_id: number | null; error: string }[];
+  cart: CartApiResult;
+}
+
+/** Called once, right after login, with the guest cart's already-resolved
+ * {designProjectId, quantity} entries — see cartMerge.ts for how a guest item (which never has
+ * a real backend DesignProject) gets one created for it before this is called. */
+export async function mergeGuestCart(entries: { designProjectId: number; quantity: number }[]): Promise<MergeGuestCartResult> {
+  const response = await sendJson<{ merged: number; errors: { design_project_id: number | null; error: string }[]; cart: BackendCart }>(
+    "/cart/merge/",
+    {
+      method: "POST",
+      body: JSON.stringify({ items: entries.map((entry) => ({ design_project_id: entry.designProjectId, quantity: entry.quantity })) }),
+    }
+  );
+  return { merged: response.merged, errors: response.errors, cart: mapCart(response.cart) };
 }

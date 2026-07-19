@@ -291,6 +291,25 @@ export interface CartItem {
   originalImageUrl?: string;
   partsConfig?: Record<string, PartCustomization>;
   designProjectId?: number;
+  /** The backend CartItem's own primary key — only set once this item has been persisted to
+   * the real backend cart (i.e. the user is signed in and this item has synced/merged). Guest
+   * (localStorage-only) items never have this. Needed because `id` above is a client-generated
+   * string used for both guest and backend-mode React keys/dedup, while removeFromCart/
+   * updateCartQuantity need the real numeric backend id to call the cart API. */
+  backendCartItemId?: number;
+}
+
+/** Server-computed cart totals (TODO.md item 27's pricing engine output) — always trust these
+ * over any client-side math. Guest (not-signed-in) carts get an unvalidated ESTIMATE computed
+ * the same way locally (see `computeGuestCartTotals` in `lib/cartPricing.ts`), never a real
+ * server total, since guest carts are never persisted to the backend. */
+export interface CartTotals {
+  subtotal: number;
+  discountAmount: number;
+  taxAmount: number;
+  shippingAmount: number;
+  total: number;
+  currency: string;
 }
 
 // --- Saved design projects (backend-persisted customizations) ---

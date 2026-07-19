@@ -1,17 +1,18 @@
 import { useCart } from '../context/CartContext.tsx';
+import { useAuth } from '../context/AuthContext.tsx';
 import { getMockupRender } from '../lib/api.ts';
 import { motion, AnimatePresence } from 'motion/react';
 import { Link } from 'react-router-dom';
-import { 
-  ShoppingBag, 
-  Trash2, 
-  ArrowRight, 
-  Plus, 
-  Minus, 
-  Sparkles, 
-  CheckCircle, 
-  Tag, 
-  Heart, 
+import {
+  ShoppingBag,
+  Trash2,
+  ArrowRight,
+  Plus,
+  Minus,
+  Sparkles,
+  CheckCircle,
+  Tag,
+  Heart,
   Printer,
   ChevronRight,
   PlusCircle,
@@ -23,16 +24,32 @@ import { useEffect, useState } from 'react';
 import { cn } from '../lib/utils.ts';
 
 export function CartPage() {
-  const { cart, removeFromCart, updateCartQuantity, getRecommendations, addToCart, updateCartItem } = useCart();
+  const {
+    cart,
+    cartTotals,
+    couponCode,
+    cartCouponError,
+    isCartSyncing,
+    removeFromCart,
+    updateCartQuantity,
+    getRecommendations,
+    addToCart,
+    updateCartItem,
+    applyCartCoupon,
+    removeCartCoupon,
+  } = useCart();
+  const { user } = useAuth();
   const [checkoutSimulated, setCheckoutSimulated] = useState(false);
   const [checkoutSuccess, setCheckoutSuccess] = useState(false);
   const [pendingDeleteItemId, setPendingDeleteItemId] = useState<string | null>(null);
   const [pollingRenderIds, setPollingRenderIds] = useState<Set<number>>(new Set());
   const [previewImage, setPreviewImage] = useState<string | null>(null);
+  const [couponInput, setCouponInput] = useState('');
 
-  const subtotal = cart.reduce((acc, item) => acc + item.price * item.quantity, 0);
-  const shipping = subtotal > 50 ? 0 : 5.99;
-  const total = subtotal + shipping;
+  // Always the server-computed totals in backend (signed-in) mode — never re-derived here. Guest
+  // mode falls back to a client-side estimate (see computeGuestCartTotals) since a guest cart is
+  // never persisted/priced server-side. See TODO.md item 27 / apps.cart.pricing on the backend.
+  const { subtotal, discountAmount, shippingAmount: shipping, total } = cartTotals;
   const pendingDeleteItem = cart.find((item) => item.id === pendingDeleteItemId) ?? null;
 
   // Recommendations mapping
@@ -395,23 +412,73 @@ export function CartPage() {
                   <span>Subtotal</span>
                   <span className="text-white font-bold">${subtotal.toFixed(2)}</span>
                 </div>
+                {discountAmount > 0 && (
+                  <div className="flex justify-between pb-3 border-b border-white/5">
+                    <span>Discount{couponCode ? ` (${couponCode})` : ''}</span>
+                    <span className="text-[#10b981] font-bold">-${discountAmount.toFixed(2)}</span>
+                  </div>
+                )}
                 <div className="flex justify-between pb-3 border-b border-white/5">
                   <span>Transit Cargo</span>
                   <span className="text-white font-bold">
                     {shipping === 0 ? <span className="text-[#10b981]">Free</span> : `$${shipping.toFixed(2)}`}
                   </span>
                 </div>
-                {shipping > 0 && (
+                {!user && shipping > 0 && (
                   <p className="text-[8px] tracking-widest text-right text-neon-blue">
                     Spend ${(50 - subtotal).toFixed(2)} more for free transit!
                   </p>
                 )}
-                
+
                 <div className="flex justify-between text-base uppercase text-white font-bold pt-4">
                   <span className="text-sm font-display font-black tracking-widest">Total Invoice</span>
                   <span className="text-xl font-display font-black text-neon-blue">${total.toFixed(2)}</span>
                 </div>
               </div>
+
+              {/* Coupon code — signed-in accounts only, since coupons are validated against the
+                  real backend cart (apps.cart.pricing.validate_coupon); a guest cart has nothing
+                  server-side to validate a coupon against. */}
+              {user && (
+                <div className="space-y-2 pt-2 border-t border-white/5">
+                  {couponCode ? (
+                    <div className="flex items-center justify-between text-xs uppercase tracking-widest">
+                      <span className="inline-flex items-center gap-1.5 text-[#10b981]">
+                        <Tag size={12} /> {couponCode} applied
+                      </span>
+                      <button
+                        type="button"
+                        onClick={removeCartCoupon}
+                        disabled={isCartSyncing}
+                        className="text-gray-500 hover:text-neon-pink transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={couponInput}
+                        onChange={(event) => setCouponInput(event.target.value)}
+                        placeholder="Coupon code"
+                        className="flex-1 min-w-0 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs uppercase tracking-widest text-white placeholder:text-gray-600 focus:outline-none focus:border-neon-blue"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => void applyCartCoupon(couponInput)}
+                        disabled={isCartSyncing || !couponInput.trim()}
+                        className="shrink-0 rounded-lg border border-white/10 bg-white/5 px-4 py-2 text-[10px] font-bold uppercase tracking-widest text-white transition-all hover:border-neon-blue disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        Apply
+                      </button>
+                    </div>
+                  )}
+                  {cartCouponError && (
+                    <p className="text-[9px] uppercase tracking-widest text-neon-pink">{cartCouponError}</p>
+                  )}
+                </div>
+              )}
 
               {/* Secure Checkout details */}
               <div className="p-4 bg-white/5 rounded-xl text-[9px] text-[#9ca3af] uppercase leading-relaxed space-y-2">
