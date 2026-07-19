@@ -25,6 +25,7 @@ export function mapPartCustomizationToPlacement(partName: string, part: PartCust
     textElements: part.textElements ?? [],
     previewRenderId: part.backendRenderId ?? null,
     previewUrl: part.mockupImageUrl ?? '',
+    printFileUrl: part.printFileUrl ?? '',
     metadata: {},
   };
 }
@@ -44,6 +45,10 @@ export function mapPlacementToPartCustomization(placement: DesignPlacement): Par
     textElements: placement.textElements,
     mockupImageUrl: placement.previewUrl || undefined,
     backendRenderId: placement.previewRenderId ?? undefined,
+    printFileUrl: placement.printFileUrl || undefined,
+    // A part reopened from a saved project is exactly what's currently on the server, so its
+    // production file (if any) is not stale relative to what's in the editor right now.
+    isPrintFileStale: false,
     isDirty: false,
   };
 }
@@ -142,9 +147,11 @@ export function partNeedsRender(part: PartCustomization | undefined): boolean {
 
 /** Pure merge used by both the interactive editor (via a setPartsConfig-wrapping helper) and
  * the checkout finalization loop (on a local accumulator) — one place that decides how a part
- * update affects isDirty, instead of each call site tracking it by hand. Defaults to marking
- * the part dirty (most callers are printable-property edits); pass `markDirty: false` for
- * non-printable bookkeeping such as recording a fresh render result. */
+ * update affects isDirty (mockup-preview staleness) AND isPrintFileStale (production-file
+ * staleness), instead of each call site tracking either by hand. Both default to being marked
+ * true together on a printable-property edit (most callers); pass `markDirty: false` for
+ * non-printable bookkeeping such as recording a fresh render or a fresh production file, where
+ * `changes` should explicitly set whichever of the two flags actually just became clean. */
 export function withPartUpdate(
   partsConfig: Record<string, PartCustomization>,
   partName: string,
@@ -152,12 +159,14 @@ export function withPartUpdate(
   options?: { markDirty?: boolean },
 ): Record<string, PartCustomization> {
   const existing = partsConfig[partName];
+  const isPrintableEdit = options?.markDirty !== false;
   return {
     ...partsConfig,
     [partName]: {
       ...existing,
       ...changes,
-      isDirty: options?.markDirty === false ? (changes.isDirty ?? existing?.isDirty) : true,
+      isDirty: isPrintableEdit ? true : (changes.isDirty ?? existing?.isDirty),
+      isPrintFileStale: isPrintableEdit ? (changes.isPrintFileStale ?? true) : (changes.isPrintFileStale ?? existing?.isPrintFileStale),
     },
   };
 }

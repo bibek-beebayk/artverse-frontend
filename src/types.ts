@@ -123,7 +123,14 @@ export interface TextElement {
  * list, no multi-image-layer support, and no plans to add either here — a customer places one
  * artwork per part and annotates it with text. If a future requirement genuinely needs multiple
  * independent images on one part, that's a new data model, not an extension of this one; don't
- * bolt it onto PartCustomization/TextElement. See services.py's equivalent note on the backend. */
+ * bolt it onto PartCustomization/TextElement. See services.py's equivalent note on the backend.
+ *
+ * Future work (not started, not scheduled): multiple image layers per part, and a single unified
+ * image+text layer stack with shared z-ordering (currently the one image always renders behind
+ * every text layer — see `_draw_text_elements`'s call order in `render_mockup_to_image` /
+ * `generate_print_file_image`). Either would need a real data-model change (a layer list with a
+ * discriminated `type: 'image' | 'text'`, not a bolt-on field here) plus editor UI, undo/redo,
+ * and production-signature updates to match — a project-level decision, not a drive-by addition. */
 export interface PartCustomization {
   sourceArtworkId?: number;
   sourceGeneratedImageId?: number;
@@ -137,8 +144,23 @@ export interface PartCustomization {
   /** True when this part's printable properties (artwork/text/placement/crop/etc.) have
    * changed since its last successful render — used to skip re-rendering unchanged parts
    * before checkout. False/undefined means the existing mockupImageUrl/backendRenderId (if
-   * any) are still valid. */
+   * any) are still valid. This governs the mockup PREVIEW render only — see
+   * `isPrintFileStale` below for the separate production-file signal. */
   isDirty?: boolean;
+  /** The URL of this part's most recently generated PRODUCTION print file (a transparent,
+   * full-resolution PNG — see `GeneratedPrintFile` on the backend). Deliberately a distinct
+   * field from `mockupImageUrl`: never store a print-file URL there, and never store the
+   * mockup preview URL here — the two are rendered in completely different places (the garment
+   * preview vs. the "Production Print Files" panel) and must never be interchangeable. */
+  printFileUrl?: string;
+  /** True when a printable edit has happened on this part since its production file (if any)
+   * was last generated — the file at `printFileUrl` may no longer match the current design.
+   * Purely a client-side, best-effort hint for the "Production Print Files" panel; the backend
+   * remains authoritative (a stale-looking part may still return `reused: true` if its actual
+   * content-signature is unchanged — e.g. renaming a text layer marks this true, but layer
+   * names aren't part of the backend signature, so generating again just reuses the file). Unset
+   * or false means "as far as the editor knows, this still matches the last generated file." */
+  isPrintFileStale?: boolean;
 }
 
 export interface ActiveCustomization {

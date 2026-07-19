@@ -27,11 +27,23 @@ import {
   Copy as CopyIcon,
   Undo2,
   Redo2,
+  FileOutput,
+  ExternalLink,
+  RefreshCw,
 } from 'lucide-react';
 import { cn } from '../lib/utils.ts';
 import { ImageModal } from '../components/Common.tsx';
 import { TShirtTemplate } from '../components/TShirtTemplate.tsx';
-import { ApiError, createMockupRender, getDesignProject, createDesignProject, replaceDesignProject, getProductVariants } from '../lib/api.ts';
+import {
+  ApiError,
+  createMockupRender,
+  getDesignProject,
+  createDesignProject,
+  replaceDesignProject,
+  getProductVariants,
+  generatePrintFiles,
+  getPrintFiles,
+} from '../lib/api.ts';
 import {
   isPartConfigured,
   mapDesignProjectToActiveCustomization,
@@ -39,6 +51,13 @@ import {
   partNeedsRender,
   withPartUpdate,
 } from '../lib/designProjectMapping.ts';
+import {
+  buildPrintFileDisplayResults,
+  derivePrintFileGenerationState,
+  printFilePartStatusLabel,
+  type PrintFileGenerationState,
+  type PrintFilePartDisplayResult,
+} from '../lib/printFileHelpers.ts';
 import type { ActiveCustomization, CropOverride, PartCustomization, PlacementOverride, ProductVariant, TextElement } from '../types.ts';
 
 type SaveStatus = 'idle' | 'dirty' | 'saving' | 'saved' | 'error';
@@ -287,8 +306,20 @@ export function Customization() {
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle');
   const [saveError, setSaveError] = useState<string | null>(null);
   const [finalizationStage, setFinalizationStage] = useState<string | null>(null);
+  // Production print-file generation — deliberately its own state, never the mockup-preview
+  // save/render status above, so the two can never be conflated in the UI (see the "Mockup
+  // Preview" vs "Production Print Files" labelling on the panel that uses these).
+  const [printFileGenerationState, setPrintFileGenerationState] = useState<PrintFileGenerationState>('idle');
+  const [printFileResults, setPrintFileResults] = useState<PrintFilePartDisplayResult[]>([]);
+  const [printFileGenerationError, setPrintFileGenerationError] = useState<string | null>(null);
   const skipNextDirtyRef = useRef(false);
   const skipNextPartDirtyRef = useRef(false);
+  // Separate from skipNextPartDirtyRef: that ref gets consumed (reset to false) by the
+  // placement/crop/text effect, which runs in the same commit as this one whenever
+  // restoreEditorSnapshot (undo/redo) changes everything at once — sharing one ref between two
+  // effects declared in sequence means the first to run would silently swallow it before the
+  // second ever sees it. Its own ref avoids that ordering hazard.
+  const skipNextVariantStaleRef = useRef(true);
   const pendingSaveAfterLoginRef = useRef(false);
   const loadedProjectIdRef = useRef<number | undefined>(undefined);
 
@@ -349,26 +380,61 @@ export function Customization() {
       return;
     }
     setSaveStatus((current) => (current === 'saving' ? current : 'dirty'));
-  }, [partsConfig, projectName, selectedColour, selectedSize, textElements, placementDraft, appliedCropOverride, cornerRadius]);
+    // placementRotationDraft: rotation (set via the pinch/twist gesture) previously wasn't in
+    // this dependency list at all — a rotation-only edit silently left the project marked
+    // clean/saved even though the resolved placement had actually changed. Fixed here since an
+    // un-flagged rotation change is exactly the kind of edit that must also invalidate a
+    // part's production print file (see the per-part effect below).
+  }, [partsConfig, projectName, selectedColour, selectedSize, textElements, placementDraft, placementRotationDraft, appliedCropOverride, cornerRadius]);
 
-  // Mark only the ACTIVE part dirty when its printable properties change (placement, crop,
-  // text, corner radius — fit/rotation/opacity live inside placementOverride once resolved).
-  // Deliberately narrower than the effect above: project name/colour/size are project-level,
-  // not part-level, and switching tabs or opening/closing a panel must not dirty a part —
-  // handlePartChange sets skipNextPartDirtyRef before restoring the newly-active part's saved
-  // values, so the resulting state change here is swallowed instead of misread as an edit.
+  // Mark only the ACTIVE part dirty (mockup preview) AND its production print file stale when
+  // its printable properties change (placement, rotation, crop, text, corner radius — fit/
+  // opacity live inside placementOverride once resolved). Deliberately narrower than the effect
+  // above: project name/colour/size are project-level, not part-level (see the colour/size
+  // effect further below, which invalidates every part instead) — switching tabs or opening/
+  // closing a panel must not dirty a part — handlePartChange sets skipNextPartDirtyRef before
+  // restoring the newly-active part's saved values, so the resulting state change here is
+  // swallowed instead of misread as an edit.
   useEffect(() => {
     if (skipNextPartDirtyRef.current) {
       skipNextPartDirtyRef.current = false;
       return;
     }
     setPartsConfig((prev) => {
-      if (prev[activePart]?.isDirty) {
+      if (prev[activePart]?.isDirty && prev[activePart]?.isPrintFileStale) {
         return prev;
       }
-      return { ...prev, [activePart]: { ...prev[activePart], isDirty: true } };
+      return { ...prev, [activePart]: { ...prev[activePart], isDirty: true, isPrintFileStale: true } };
     });
-  }, [placementDraft, appliedCropOverride, textElements, cornerRadius]);
+  }, [placementDraft, placementRotationDraft, appliedCropOverride, textElements, cornerRadius]);
+
+  // A colour/size (variant) change can change which parts are printable at all, or their
+  // required production dimensions (a different variant can map to a different template/part
+  // config) — invalidate every configured part's production file, not just the active one,
+  // since parts other than the active tab could be affected without the user ever touching them
+  // directly. Guarded by its own ref (see skipNextVariantStaleRef's declaration) rather than
+  // skipNextPartDirtyRef, so a fresh project load or an undo/redo that also happens to change
+  // colour/size doesn't get misread as the user actually picking a different colour/size.
+  useEffect(() => {
+    if (skipNextVariantStaleRef.current) {
+      skipNextVariantStaleRef.current = false;
+      return;
+    }
+    setPartsConfig((prev) => {
+      let changed = false;
+      const next: Record<string, PartCustomization> = {};
+      for (const [partName, part] of Object.entries(prev)) {
+        if (part.isPrintFileStale || !isPartConfigured(part)) {
+          next[partName] = part;
+          continue;
+        }
+        changed = true;
+        next[partName] = { ...part, isPrintFileStale: true };
+      }
+      return changed ? next : prev;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedColour, selectedSize]);
 
   // Centralized part-state updater (section 6): route part edits through here instead of
   // scattering `setPartsConfig` + manual `isDirty` bookkeeping across handlers — this and the
@@ -404,6 +470,9 @@ export function Customization() {
   // Initialize selected defaults from active customization
   useEffect(() => {
     if (customization) {
+      // The colour/size defaults set below are initialization, not the user picking a
+      // different variant — don't let the colour/size stale-marking effect misread them.
+      skipNextVariantStaleRef.current = true;
       setPreviewRenderId(undefined);
       setPreviewLoading(false);
       setIsPreviewAssetLoading(true);
@@ -654,6 +723,10 @@ export function Customization() {
   const restoreEditorSnapshot = (snapshot: EditorSnapshot) => {
     skipNextDirtyRef.current = true;
     skipNextPartDirtyRef.current = true;
+    // Undo/redo already restores partsConfig verbatim (including each part's own
+    // isPrintFileStale from the snapshot) — don't let the colour/size effect additionally
+    // stomp every part's stale flag just because selectedColour/selectedSize also moved.
+    skipNextVariantStaleRef.current = true;
     setActivePart(snapshot.activePart);
     setPartsConfig(snapshot.partsConfig);
     setTextElements(snapshot.textElements);
@@ -1590,6 +1663,100 @@ export function Customization() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
+  /** Development/admin action: save the complete current design, then generate (or reuse)
+   * production print files for it — see the "Production Print Files" panel. Never touches the
+   * cart and never contacts Printify; this is generation only. Steps 1-4 below mirror the task's
+   * own suggested shape: capture -> save/replace -> use the RETURNED id -> call the print-file
+   * endpoint. The returned id is used directly (never `currentProjectId` state, which for a
+   * brand-new design wouldn't have committed yet when this function needs it) so this doesn't
+   * depend on React having already re-rendered with the new project id. */
+  const handleGeneratePrintFiles = async () => {
+    if (!customization) return;
+
+    if (!user) {
+      void signIn();
+      return;
+    }
+
+    setPrintFileGenerationError(null);
+    setPrintFileGenerationState('saving');
+
+    let savedProjectId: number;
+    try {
+      const merged = captureCurrentPartsConfig();
+      setPartsConfig(merged);
+      const savedProject = await persistDesignProject(merged);
+      savedProjectId = savedProject.id;
+      skipNextDirtyRef.current = true;
+      setSaveStatus('saved');
+      window.setTimeout(() => {
+        setSaveStatus((current) => (current === 'saved' ? 'idle' : current));
+      }, 3000);
+    } catch (error) {
+      // Saving failed — the print-file endpoint is never called, the editor's current state is
+      // untouched (nothing above this point mutated partsConfig/placement/text state), and the
+      // user can simply click the action again to retry.
+      setPrintFileGenerationState('failed');
+      if (error instanceof ApiError && error.status === 401) {
+        setPrintFileGenerationError('Your session expired. Please sign in again, then click Generate Print Files once more.');
+        void signIn();
+      } else {
+        setPrintFileGenerationError(error instanceof Error ? error.message : 'Could not save the design before generating print files.');
+      }
+      return;
+    }
+
+    setPrintFileGenerationState('generating');
+    try {
+      const result = await generatePrintFiles(savedProjectId);
+      const displayResults = buildPrintFileDisplayResults({
+        templateParts: customization.templateParts,
+        supportedPrintAreas,
+        apiResults: result.parts,
+      });
+      setPrintFileResults(displayResults);
+
+      // Only a genuinely completed (not reused, not failed/skipped) part actually changes what
+      // printFileUrl points at — a reused part already has the right URL from before, and
+      // markDirty:false means this never touches isDirty (the mockup PREVIEW might still be
+      // stale even though the production file is now current — the two are independent).
+      for (const part of result.parts) {
+        if ((part.status === 'completed') && part.printFileUrl) {
+          updatePartCustomization(part.partName, { printFileUrl: part.printFileUrl, isPrintFileStale: false }, { markDirty: false });
+        }
+      }
+
+      setPrintFileGenerationState(derivePrintFileGenerationState(displayResults));
+    } catch (error) {
+      // Whatever succeeded before the failure (there isn't a partial-throw case with the
+      // current synchronous endpoint, but if a future async version introduces one, previously
+      // set printFileResults/printFileUrl values are simply left as they were — never cleared).
+      setPrintFileGenerationState('failed');
+      setPrintFileGenerationError(error instanceof Error ? error.message : 'Print file generation failed.');
+    }
+  };
+
+  /** Read-only refresh — GET only, never regenerates. Useful after reloading the page or when
+   * checking on a generation attempt from an earlier session without re-triggering one. */
+  const handleRefreshPrintFileStatus = async () => {
+    if (!currentProjectId) return;
+    setPrintFileGenerationError(null);
+    try {
+      const result = await getPrintFiles(currentProjectId);
+      const displayResults = buildPrintFileDisplayResults({
+        templateParts: customization?.templateParts,
+        supportedPrintAreas,
+        apiResults: result.parts,
+      });
+      setPrintFileResults(displayResults);
+      if (displayResults.some((r) => r.displayStatus === 'generated' || r.displayStatus === 'reused' || r.displayStatus === 'failed')) {
+        setPrintFileGenerationState(derivePrintFileGenerationState(displayResults));
+      }
+    } catch (error) {
+      setPrintFileGenerationError(error instanceof Error ? error.message : 'Could not refresh print file status.');
+    }
+  };
+
   const handleConfirmAddToCart = async () => {
     if (!customization) return;
     setIsAdding(true);
@@ -2354,6 +2521,129 @@ export function Customization() {
                 {projectLoadError}
               </div>
             )}
+
+            {/* Development/admin action — generates the actual production print files (see
+                DEVELOPER_GUIDE.md §2.5b), never a mockup preview. Kept visually and functionally
+                separate from the "Mockup Preview" render above: different state, different
+                button, different result list, and it never touches the cart or Printify. */}
+            <div className="mb-6 rounded-2xl border border-white/10 bg-white/5 p-4 space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <p className="text-[9px] font-bold uppercase tracking-[0.3em] text-neon-purple">
+                    Production Print Files <span className="text-gray-500">(development/admin)</span>
+                  </p>
+                  <p className="mt-1 text-[10px] uppercase tracking-widest text-gray-500">
+                    Transparent, full-resolution files for fulfilment — not the mockup preview above.
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void handleRefreshPrintFileStatus()}
+                    disabled={!currentProjectId || printFileGenerationState === 'saving' || printFileGenerationState === 'generating'}
+                    title="Check the latest status without generating anything new"
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-[9px] font-bold uppercase tracking-widest text-gray-300 transition-all hover:border-white/30 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    <RefreshCw size={12} /> Refresh Status
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleGeneratePrintFiles()}
+                    disabled={
+                      !user ||
+                      !customization ||
+                      printFileGenerationState === 'saving' ||
+                      printFileGenerationState === 'generating' ||
+                      !(Boolean(customization?.imageUrl) || textElements.length > 0 || Object.values(partsConfig).some(isPartConfigured))
+                    }
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-neon-purple/40 bg-neon-purple/10 px-3 py-1.5 text-[9px] font-bold uppercase tracking-widest text-neon-purple transition-all hover:bg-neon-purple hover:text-white disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-neon-purple/10 disabled:hover:text-neon-purple"
+                  >
+                    {printFileGenerationState === 'saving' || printFileGenerationState === 'generating' ? (
+                      <Loader2 size={12} className="animate-spin" />
+                    ) : (
+                      <FileOutput size={12} />
+                    )}
+                    Generate Print Files
+                  </button>
+                </div>
+              </div>
+
+              {printFileGenerationState === 'saving' && (
+                <p className="text-[10px] uppercase tracking-widest text-gray-400">Saving design…</p>
+              )}
+              {printFileGenerationState === 'generating' && (
+                <p className="text-[10px] uppercase tracking-widest text-gray-400">Generating print files…</p>
+              )}
+              {printFileGenerationState === 'completed' && (
+                <p className="text-[10px] uppercase tracking-widest text-emerald-400">Production files up to date.</p>
+              )}
+              {printFileGenerationState === 'partial' && (
+                <p className="text-[10px] uppercase tracking-widest text-amber-400">Production files partially generated — see per-part results below.</p>
+              )}
+              {printFileGenerationState === 'failed' && (
+                <p className="text-[10px] uppercase tracking-widest text-neon-pink">
+                  {printFileGenerationError || 'Print file generation failed.'}
+                </p>
+              )}
+              {printFileGenerationState !== 'failed' && printFileGenerationError && (
+                <p className="text-[10px] uppercase tracking-widest text-neon-pink">{printFileGenerationError}</p>
+              )}
+
+              {printFileResults.length > 0 && (
+                <div className="space-y-2 pt-1">
+                  {printFileResults.map((result) => {
+                    const isStale = partsConfig[result.partName]?.isPrintFileStale === true;
+                    const isFailure = result.displayStatus === 'failed';
+                    const isSkipped = result.displayStatus === 'skipped-empty' || result.displayStatus === 'skipped-unsupported';
+                    return (
+                      <div
+                        key={result.partName}
+                        className={cn(
+                          'rounded-xl border px-3 py-2 text-[10px] uppercase tracking-widest',
+                          isFailure
+                            ? 'border-neon-pink/30 bg-neon-pink/5 text-neon-pink'
+                            : isSkipped
+                              ? 'border-white/5 bg-white/[0.02] text-gray-500'
+                              : 'border-white/10 bg-white/5 text-gray-300'
+                        )}
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <span className="font-bold text-white">
+                            {result.partName}
+                            {isStale && !isSkipped && (
+                              <span className="ml-2 rounded-full border border-amber-400/40 bg-amber-400/10 px-2 py-0.5 text-[8px] font-bold text-amber-300 normal-case tracking-normal">
+                                Stale — regenerate to match current design
+                              </span>
+                            )}
+                          </span>
+                          <span>{printFilePartStatusLabel(result.displayStatus)}</span>
+                        </div>
+                        {!isSkipped && !isFailure && (
+                          <p className="mt-1 normal-case tracking-normal text-gray-400">
+                            {result.width && result.height ? `${result.width} × ${result.height} px` : null}
+                            {result.dpi ? ` · ${result.dpi} DPI` : null}
+                            {' · Transparent PNG'}
+                          </p>
+                        )}
+                        {isFailure && result.error && (
+                          <p className="mt-1 normal-case tracking-normal">{result.error}</p>
+                        )}
+                        {result.printFileUrl && (
+                          <a
+                            href={result.printFileUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="mt-1 inline-flex items-center gap-1 text-neon-blue normal-case tracking-normal hover:underline"
+                          >
+                            <ExternalLink size={11} /> Open Print File
+                          </a>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
 
             <div className="flex space-x-2 border-b border-white/10 mb-2">
               <button
