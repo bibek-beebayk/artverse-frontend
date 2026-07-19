@@ -519,6 +519,39 @@ export function Customization() {
     };
   }, [cornerRadius, customization, placementDraft, placementRotationDraft]);
 
+  /** The admin-configured, non-draggable print boundary for the active part — derived purely
+   * from `activeTemplatePart.config.placement` (falling back to the template's top-level
+   * basePlacement when the part has no explicit config), never from `placementDraft`. Dragging,
+   * resizing, or switching the active design only ever changes `placementDraft` — this stays
+   * fixed regardless, which is what makes it the reference clamp/snap boundary for the
+   * draggable artwork box rather than the whole garment canvas. Mirrors the backend's
+   * get_fixed_print_area() so the editor and the production-file pipeline agree on where the
+   * printable region actually is. */
+  const activeFixedPrintArea = useMemo(() => {
+    const configuredArea = extractPlacementFromConfig(activeTemplatePart?.config) ?? customization?.basePlacement ?? null;
+    if (!configuredArea) {
+      return null;
+    }
+    return {
+      x: configuredArea.x,
+      y: configuredArea.y,
+      width: configuredArea.width,
+      height: configuredArea.height,
+    };
+  }, [activeTemplatePart, customization?.basePlacement]);
+
+  const previewFixedPrintAreaStyle = useMemo(() => {
+    if (!activeFixedPrintArea || !templateDimensions) {
+      return null;
+    }
+    return {
+      left: `${(activeFixedPrintArea.x / templateDimensions.width) * 100}%`,
+      top: `${(activeFixedPrintArea.y / templateDimensions.height) * 100}%`,
+      width: `${(activeFixedPrintArea.width / templateDimensions.width) * 100}%`,
+      height: `${(activeFixedPrintArea.height / templateDimensions.height) * 100}%`,
+    };
+  }, [activeFixedPrintArea, templateDimensions]);
+
   const previewPlacementStyle = useMemo(() => {
     if (!previewResolvedPlacement || !templateDimensions) {
       return null;
@@ -532,39 +565,46 @@ export function Customization() {
     };
   }, [previewResolvedPlacement, templateDimensions]);
 
-  // Safe area is expressed as percentages *within* the print area, so it maps directly onto
-  // CSS percentages of the placement box itself — no canvas-unit conversion needed.
+  // Safe area is expressed as percentages *within the fixed print area* (not the whole canvas,
+  // and deliberately not the draggable artwork box either — see activeFixedPrintArea's
+  // docstring) — resolve it against the fixed area's own pixel bounds, then convert to
+  // canvas-relative percentages so it can be rendered as a sibling of the artwork box and stay
+  // in place while the artwork is dragged or resized.
   const previewSafeAreaStyle = useMemo(() => {
     const safeArea = activeTemplatePart?.safeArea;
-    if (!safeArea) return null;
+    if (!safeArea || !activeFixedPrintArea || !templateDimensions) return null;
+    const areaLeftPx = activeFixedPrintArea.x + (safeArea.left / 100) * activeFixedPrintArea.width;
+    const areaTopPx = activeFixedPrintArea.y + (safeArea.top / 100) * activeFixedPrintArea.height;
+    const areaWidthPx = (safeArea.width / 100) * activeFixedPrintArea.width;
+    const areaHeightPx = (safeArea.height / 100) * activeFixedPrintArea.height;
     return {
-      left: `${safeArea.left}%`,
-      top: `${safeArea.top}%`,
-      width: `${safeArea.width}%`,
-      height: `${safeArea.height}%`,
+      left: `${(areaLeftPx / templateDimensions.width) * 100}%`,
+      top: `${(areaTopPx / templateDimensions.height) * 100}%`,
+      width: `${(areaWidthPx / templateDimensions.width) * 100}%`,
+      height: `${(areaHeightPx / templateDimensions.height) * 100}%`,
     };
-  }, [activeTemplatePart]);
+  }, [activeTemplatePart, activeFixedPrintArea, templateDimensions]);
 
-  // Bleed is pixels *beyond* the print area edge, in template-canvas units — convert to a
-  // percentage of the canvas and expand the placement box outward by that amount.
+  // Bleed is pixels *beyond the fixed print area's edge* — expand outward from the fixed area
+  // (not the moving artwork box), so it also stays put while the artwork is dragged or resized.
   const previewBleedAreaStyle = useMemo(() => {
     const bleedArea = activeTemplatePart?.bleedArea;
-    if (!bleedArea || !previewResolvedPlacement || !templateDimensions) return null;
+    if (!bleedArea || !activeFixedPrintArea || !templateDimensions) return null;
     const bleedLeftPct = (bleedArea.left / templateDimensions.width) * 100;
     const bleedRightPct = (bleedArea.right / templateDimensions.width) * 100;
     const bleedTopPct = (bleedArea.top / templateDimensions.height) * 100;
     const bleedBottomPct = (bleedArea.bottom / templateDimensions.height) * 100;
-    const leftPct = (previewResolvedPlacement.x / templateDimensions.width) * 100 - bleedLeftPct;
-    const topPct = (previewResolvedPlacement.y / templateDimensions.height) * 100 - bleedTopPct;
-    const widthPct = (previewResolvedPlacement.width / templateDimensions.width) * 100 + bleedLeftPct + bleedRightPct;
-    const heightPct = (previewResolvedPlacement.height / templateDimensions.height) * 100 + bleedTopPct + bleedBottomPct;
+    const leftPct = (activeFixedPrintArea.x / templateDimensions.width) * 100 - bleedLeftPct;
+    const topPct = (activeFixedPrintArea.y / templateDimensions.height) * 100 - bleedTopPct;
+    const widthPct = (activeFixedPrintArea.width / templateDimensions.width) * 100 + bleedLeftPct + bleedRightPct;
+    const heightPct = (activeFixedPrintArea.height / templateDimensions.height) * 100 + bleedTopPct + bleedBottomPct;
     return {
       left: `${leftPct}%`,
       top: `${topPct}%`,
       width: `${widthPct}%`,
       height: `${heightPct}%`,
     };
-  }, [activeTemplatePart, previewResolvedPlacement, templateDimensions]);
+  }, [activeTemplatePart, activeFixedPrintArea, templateDimensions]);
 
   const imageQualityWarnings = useMemo(() => {
     const warnings: string[] = [];
@@ -657,6 +697,122 @@ export function Customization() {
     historyRef.current = { past, future: remainingFuture };
     setHistoryCounts({ past: past.length, future: remainingFuture.length });
     restoreEditorSnapshot(next);
+  };
+
+  // Guards a continuous interaction (dragging a slider, typing in a field, dragging the native
+  // colour picker) to a single history entry: the first pointerdown/focus of the interaction
+  // pushes one snapshot, every change during the interaction is applied without recording a new
+  // one, and pointerup/blur clears the guard so the next interaction starts its own snapshot.
+  const continuousEditActiveRef = useRef(false);
+
+  const beginContinuousEdit = () => {
+    if (continuousEditActiveRef.current) return;
+    continuousEditActiveRef.current = true;
+    pushHistorySnapshot();
+  };
+
+  const endContinuousEdit = () => {
+    continuousEditActiveRef.current = false;
+  };
+
+  /** The single place every text-layer property change goes through. `recordHistory: false`
+   * (used for continuous interactions already snapshotted by beginContinuousEdit) applies the
+   * change without pushing another history entry. */
+  const updateTextLayer = (
+    id: string,
+    changes: Partial<TextElement>,
+    options?: { recordHistory?: boolean }
+  ) => {
+    if (options?.recordHistory !== false) {
+      pushHistorySnapshot();
+    }
+    setTextElements((prev) => prev.map((t) => (t.id === id ? { ...t, ...changes } : t)));
+  };
+
+  const addTextLayer = () => {
+    pushHistorySnapshot();
+    const newId = `text-${Date.now()}`;
+    setTextElements((prev) => [
+      ...prev,
+      {
+        id: newId,
+        text: 'New Text',
+        fontFamily: 'Roboto',
+        color: '#ffffff',
+        fontSize: 48,
+        x: templateDimensions ? templateDimensions.width / 2 : 500,
+        y: templateDimensions ? templateDimensions.height / 2 : 500,
+        rotation: 0,
+        isBold: false,
+        isItalic: false,
+        textAlign: 'center',
+        lineHeight: 1.2,
+        isHidden: false,
+        isLocked: false,
+      },
+    ]);
+    setActiveTextId(newId);
+  };
+
+  const duplicateTextLayer = (id: string) => {
+    pushHistorySnapshot();
+    const duplicateId = `text-${Date.now()}`;
+    setTextElements((prev) => {
+      const idx = prev.findIndex((t) => t.id === id);
+      if (idx === -1) return prev;
+      const clone: TextElement = {
+        ...prev[idx],
+        id: duplicateId,
+        x: prev[idx].x + 24,
+        y: prev[idx].y + 24,
+        layerName: prev[idx].layerName ? `${prev[idx].layerName} Copy` : undefined,
+      };
+      const next = [...prev];
+      next.splice(idx + 1, 0, clone);
+      return next;
+    });
+    setActiveTextId(duplicateId);
+  };
+
+  const deleteTextLayer = (id: string) => {
+    pushHistorySnapshot();
+    setTextElements((prev) => prev.filter((t) => t.id !== id));
+  };
+
+  const moveTextLayerUp = (id: string) => {
+    pushHistorySnapshot();
+    setTextElements((prev) => {
+      const idx = prev.findIndex((t) => t.id === id);
+      if (idx === -1 || idx === prev.length - 1) return prev;
+      const next = [...prev];
+      [next[idx], next[idx + 1]] = [next[idx + 1], next[idx]];
+      return next;
+    });
+  };
+
+  const moveTextLayerDown = (id: string) => {
+    pushHistorySnapshot();
+    setTextElements((prev) => {
+      const idx = prev.findIndex((t) => t.id === id);
+      if (idx <= 0) return prev;
+      const next = [...prev];
+      [next[idx - 1], next[idx]] = [next[idx], next[idx - 1]];
+      return next;
+    });
+  };
+
+  const toggleTextLayerVisibility = (id: string) => {
+    pushHistorySnapshot();
+    setTextElements((prev) => prev.map((t) => (t.id === id ? { ...t, isHidden: !t.isHidden } : t)));
+  };
+
+  const toggleTextLayerLock = (id: string) => {
+    pushHistorySnapshot();
+    setTextElements((prev) => prev.map((t) => (t.id === id ? { ...t, isLocked: !t.isLocked } : t)));
+  };
+
+  const renameTextLayer = (id: string, name: string) => {
+    updateTextLayer(id, { layerName: name }, { recordHistory: false });
   };
 
   useEffect(() => {
@@ -791,26 +947,31 @@ export function Customization() {
     const deltaX = ((event.clientX - activeDrag.startX) / activeDrag.width) * templateDimensions.width;
     const deltaY = ((event.clientY - activeDrag.startY) / activeDrag.height) * templateDimensions.height;
 
+    // Clamp/snap against the fixed print area (the admin-configured printable region), not the
+    // full garment canvas — falls back to the whole canvas only if this part has no configured
+    // boundary at all, so parts without one keep their previous (pre-fixed-area) behavior.
+    const bounds = activeFixedPrintArea ?? { x: 0, y: 0, width: templateDimensions.width, height: templateDimensions.height };
+
     if (activeDrag.handle === 'move') {
       const { width, height } = activeDrag.originPlacement;
-      let nextX = clamp(Math.round(activeDrag.originPlacement.x + deltaX), 0, templateDimensions.width - width);
-      let nextY = clamp(Math.round(activeDrag.originPlacement.y + deltaY), 0, templateDimensions.height - height);
+      let nextX = clamp(Math.round(activeDrag.originPlacement.x + deltaX), bounds.x, bounds.x + bounds.width - width);
+      let nextY = clamp(Math.round(activeDrag.originPlacement.y + deltaY), bounds.y, bounds.y + bounds.height - height);
 
       // Centre/edge snapping: within a small threshold of a guide position, snap exactly to it
       // and report which guide lit up so the preview can draw an alignment line.
       const snapThresholdX = Math.max(6, templateDimensions.width * 0.012);
       const snapThresholdY = Math.max(6, templateDimensions.height * 0.012);
-      const centerX = (templateDimensions.width - width) / 2;
-      const centerY = (templateDimensions.height - height) / 2;
-      const maxX = templateDimensions.width - width;
-      const maxY = templateDimensions.height - height;
+      const centerX = bounds.x + (bounds.width - width) / 2;
+      const centerY = bounds.y + (bounds.height - height) / 2;
+      const maxX = bounds.x + bounds.width - width;
+      const maxY = bounds.y + bounds.height - height;
 
       let vertical: 'left' | 'center' | 'right' | null = null;
       if (Math.abs(nextX - centerX) <= snapThresholdX) {
         nextX = centerX;
         vertical = 'center';
-      } else if (Math.abs(nextX) <= snapThresholdX) {
-        nextX = 0;
+      } else if (Math.abs(nextX - bounds.x) <= snapThresholdX) {
+        nextX = bounds.x;
         vertical = 'left';
       } else if (Math.abs(nextX - maxX) <= snapThresholdX) {
         nextX = maxX;
@@ -821,8 +982,8 @@ export function Customization() {
       if (Math.abs(nextY - centerY) <= snapThresholdY) {
         nextY = centerY;
         horizontal = 'center';
-      } else if (Math.abs(nextY) <= snapThresholdY) {
-        nextY = 0;
+      } else if (Math.abs(nextY - bounds.y) <= snapThresholdY) {
+        nextY = bounds.y;
         horizontal = 'top';
       } else if (Math.abs(nextY - maxY) <= snapThresholdY) {
         nextY = maxY;
@@ -844,12 +1005,12 @@ export function Customization() {
     const nextWidth = clamp(
       Math.round(activeDrag.originPlacement.width + deltaX),
       MIN_PLACEMENT_SIZE,
-      templateDimensions.width - activeDrag.originPlacement.x
+      bounds.x + bounds.width - activeDrag.originPlacement.x
     );
     const nextHeight = clamp(
       Math.round(activeDrag.originPlacement.height + deltaY),
       MIN_PLACEMENT_SIZE,
-      templateDimensions.height - activeDrag.originPlacement.y
+      bounds.y + bounds.height - activeDrag.originPlacement.y
     );
 
     setPlacementDraft({
@@ -913,16 +1074,20 @@ export function Customization() {
     if (!state || event.touches.length !== 2 || !templateDimensions) return;
     event.preventDefault();
 
+    // Clamp against the fixed print area, same boundary the mouse-drag path uses — falls back
+    // to the full canvas only when this part has no configured print-area boundary.
+    const bounds = activeFixedPrintArea ?? { x: 0, y: 0, width: templateDimensions.width, height: templateDimensions.height };
+
     const scale = getTouchDistance(event.touches) / state.initialDistance;
-    const nextWidth = clamp(Math.round(state.originWidth * scale), MIN_PLACEMENT_SIZE, templateDimensions.width);
-    const nextHeight = clamp(Math.round(state.originHeight * scale), MIN_PLACEMENT_SIZE, templateDimensions.height);
+    const nextWidth = clamp(Math.round(state.originWidth * scale), MIN_PLACEMENT_SIZE, bounds.width);
+    const nextHeight = clamp(Math.round(state.originHeight * scale), MIN_PLACEMENT_SIZE, bounds.height);
 
     // Resize around the gesture's original centre point rather than the top-left corner, so
     // pinching feels like it's scaling "in place" the way it would on a native photo app.
     const centerX = state.originX + state.originWidth / 2;
     const centerY = state.originY + state.originHeight / 2;
-    const nextX = clamp(Math.round(centerX - nextWidth / 2), 0, templateDimensions.width - nextWidth);
-    const nextY = clamp(Math.round(centerY - nextHeight / 2), 0, templateDimensions.height - nextHeight);
+    const nextX = clamp(Math.round(centerX - nextWidth / 2), bounds.x, bounds.x + bounds.width - nextWidth);
+    const nextY = clamp(Math.round(centerY - nextHeight / 2), bounds.y, bounds.y + bounds.height - nextHeight);
 
     setPlacementDraft({ x: nextX, y: nextY, width: nextWidth, height: nextHeight });
     setPlacementRotationDraft(state.originRotation + (getTouchAngle(event.touches) - state.initialAngle));
@@ -1806,13 +1971,6 @@ export function Customization() {
                         )}
 
                         <div className="pointer-events-none absolute inset-0 rounded-[inherit] border-2 border-neon-blue/80 shadow-[0_0_0_1px_rgba(255,255,255,0.65)_inset]" />
-                        {isPlacementDragging && previewSafeAreaStyle && (
-                          <div
-                            className="pointer-events-none absolute border border-dashed border-emerald-400/70"
-                            style={previewSafeAreaStyle}
-                            title="Safe area — keep important content inside this zone"
-                          />
-                        )}
                         <div className="pointer-events-none absolute left-2 top-2 rounded-full bg-cyber-black/75 px-2 py-1 text-[8px] font-black uppercase tracking-[0.25em] text-neon-blue">
                           Drag To Move
                         </div>
@@ -1830,8 +1988,29 @@ export function Customization() {
                       </div>
                     )}
 
-                    {/* Design-boundary guides — bleed zone + centre/edge alignment lines, shown
-                        only while actively dragging so the preview stays uncluttered otherwise. */}
+                    {/* Fixed print-area boundary — the admin-configured, non-draggable printable
+                        region (see activeFixedPrintArea). Positioned relative to the canvas, not
+                        the artwork box below, so it never moves when the artwork is dragged,
+                        resized, or rotated. Shown alongside the other guides while interacting so
+                        the preview stays uncluttered the rest of the time. */}
+                    {isPlacementDragging && previewFixedPrintAreaStyle && (
+                      <div
+                        className="pointer-events-none absolute z-[8] border-2 border-solid border-neon-purple/70"
+                        style={previewFixedPrintAreaStyle}
+                        title="Print area — the fixed, non-draggable printable region for this part"
+                      />
+                    )}
+                    {/* Design-boundary guides — safe area, bleed zone + centre/edge alignment
+                        lines, shown only while actively dragging so the preview stays
+                        uncluttered otherwise. Both are anchored to the fixed print area above,
+                        not the draggable artwork box, so they stay put while the artwork moves. */}
+                    {isPlacementDragging && previewSafeAreaStyle && (
+                      <div
+                        className="pointer-events-none absolute z-[9] border border-dashed border-emerald-400/70"
+                        style={previewSafeAreaStyle}
+                        title="Safe area — keep important content inside this zone"
+                      />
+                    )}
                     {isPlacementDragging && previewBleedAreaStyle && (
                       <div
                         className="pointer-events-none absolute z-[9] border border-dashed border-amber-400/60"
@@ -2052,7 +2231,12 @@ export function Customization() {
                     max={120}
                     step={2}
                     value={cornerRadius}
-                    onChange={(event) => setCornerRadius(Number(event.target.value))}
+                    onPointerDown={beginContinuousEdit}
+                    onChange={(event) => {
+                      beginContinuousEdit();
+                      setCornerRadius(Number(event.target.value));
+                    }}
+                    onPointerUp={endContinuousEdit}
                     className="w-full accent-[var(--color-neon-blue)]"
                   />
                 </div>
@@ -2086,6 +2270,7 @@ export function Customization() {
                       <button
                         type="button"
                         onClick={() => {
+                          pushHistorySnapshot();
                           setAppliedCropOverride(null);
                           setDraftCropRect({ left: 0, top: 0, width: 100, height: 100 });
                         }}
@@ -2225,7 +2410,12 @@ export function Customization() {
                       max={120}
                       step={2}
                       value={cornerRadius}
-                      onChange={(event) => setCornerRadius(Number(event.target.value))}
+                      onPointerDown={beginContinuousEdit}
+                      onChange={(event) => {
+                        beginContinuousEdit();
+                        setCornerRadius(Number(event.target.value));
+                      }}
+                      onPointerUp={endContinuousEdit}
                       className="w-full accent-[var(--color-neon-blue)]"
                     />
                   </div>
@@ -2273,6 +2463,7 @@ export function Customization() {
                   <button
                     type="button"
                     onClick={() => {
+                      pushHistorySnapshot();
                       setPlacementDraft(
                         customization.basePlacement
                           ? {
@@ -2384,27 +2575,7 @@ export function Customization() {
                   </p>
                   <button
                     type="button"
-                    onClick={() => {
-                      pushHistorySnapshot();
-                      const newId = `text-${Date.now()}`;
-                      setTextElements(prev => [...prev, {
-                        id: newId,
-                        text: 'New Text',
-                        fontFamily: 'Roboto',
-                        color: '#ffffff',
-                        fontSize: 48,
-                        x: templateDimensions ? templateDimensions.width / 2 : 500,
-                        y: templateDimensions ? templateDimensions.height / 2 : 500,
-                        rotation: 0,
-                        isBold: false,
-                        isItalic: false,
-                        textAlign: 'center',
-                        lineHeight: 1.2,
-                        isHidden: false,
-                        isLocked: false,
-                      }]);
-                      setActiveTextId(newId);
-                    }}
+                    onClick={addTextLayer}
                     className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-white/10 hover:bg-white/20 border border-white/10 hover:border-white/30 text-white font-bold text-[10px] uppercase tracking-widest rounded-xl transition-all"
                   >
                     <Type size={14} /> Add New Text Block
@@ -2426,15 +2597,19 @@ export function Customization() {
                           <input
                             type="text"
                             value={textEl.layerName ?? ''}
-                            onChange={(e) => setTextElements(prev => prev.map(t => t.id === textEl.id ? { ...t, layerName: e.target.value } : t))}
-                            onFocus={() => setActiveTextId(textEl.id)}
+                            onFocus={() => {
+                              setActiveTextId(textEl.id);
+                              beginContinuousEdit();
+                            }}
+                            onChange={(e) => renameTextLayer(textEl.id, e.target.value)}
+                            onBlur={endContinuousEdit}
                             className="bg-transparent border-b border-white/20 text-white focus:outline-none focus:border-neon-pink text-sm w-full mr-2 min-w-0"
                             placeholder={textEl.text.slice(0, 24) || 'Text layer'}
                           />
                           <div className="flex items-center gap-1 shrink-0">
                             <button
                               type="button"
-                              onClick={() => setTextElements(prev => prev.map(t => t.id === textEl.id ? { ...t, isLocked: !t.isLocked } : t))}
+                              onClick={() => toggleTextLayerLock(textEl.id)}
                               className={cn("p-1.5 rounded transition-colors", textEl.isLocked ? "text-neon-blue" : "text-gray-500 hover:text-white")}
                               title={textEl.isLocked ? "Unlock layer" : "Lock layer (prevents dragging on the preview)"}
                             >
@@ -2442,7 +2617,7 @@ export function Customization() {
                             </button>
                             <button
                               type="button"
-                              onClick={() => setTextElements(prev => prev.map(t => t.id === textEl.id ? { ...t, isHidden: !t.isHidden } : t))}
+                              onClick={() => toggleTextLayerVisibility(textEl.id)}
                               className={cn("p-1.5 rounded transition-colors", textEl.isHidden ? "text-neon-pink" : "text-gray-500 hover:text-white")}
                               title={textEl.isHidden ? "Show layer" : "Hide layer (kept, just not shown or printed)"}
                             >
@@ -2450,24 +2625,7 @@ export function Customization() {
                             </button>
                             <button
                               type="button"
-                              onClick={() => {
-                                pushHistorySnapshot();
-                                const duplicateId = `text-${Date.now()}`;
-                                setTextElements(prev => {
-                                  const idx = prev.findIndex(t => t.id === textEl.id);
-                                  const clone: TextElement = {
-                                    ...textEl,
-                                    id: duplicateId,
-                                    x: textEl.x + 24,
-                                    y: textEl.y + 24,
-                                    layerName: textEl.layerName ? `${textEl.layerName} Copy` : undefined,
-                                  };
-                                  const next = [...prev];
-                                  next.splice(idx + 1, 0, clone);
-                                  return next;
-                                });
-                                setActiveTextId(duplicateId);
-                              }}
+                              onClick={() => duplicateTextLayer(textEl.id)}
                               className="p-1.5 rounded text-gray-500 hover:text-white transition-colors"
                               title="Duplicate layer"
                             >
@@ -2475,15 +2633,7 @@ export function Customization() {
                             </button>
                             <button
                               type="button"
-                              onClick={() => {
-                                setTextElements(prev => {
-                                  const idx = prev.findIndex(t => t.id === textEl.id);
-                                  if (idx === -1 || idx === prev.length - 1) return prev;
-                                  const next = [...prev];
-                                  [next[idx], next[idx + 1]] = [next[idx + 1], next[idx]];
-                                  return next;
-                                });
-                              }}
+                              onClick={() => moveTextLayerUp(textEl.id)}
                               className="text-gray-500 hover:text-white transition-colors text-xs font-bold uppercase tracking-widest px-1.5"
                               title="Move Layer Forward"
                             >
@@ -2491,15 +2641,7 @@ export function Customization() {
                             </button>
                             <button
                               type="button"
-                              onClick={() => {
-                                setTextElements(prev => {
-                                  const idx = prev.findIndex(t => t.id === textEl.id);
-                                  if (idx <= 0) return prev;
-                                  const next = [...prev];
-                                  [next[idx - 1], next[idx]] = [next[idx], next[idx - 1]];
-                                  return next;
-                                });
-                              }}
+                              onClick={() => moveTextLayerDown(textEl.id)}
                               className="text-gray-500 hover:text-white transition-colors text-xs font-bold uppercase tracking-widest px-1.5"
                               title="Move Layer Backward"
                             >
@@ -2507,10 +2649,7 @@ export function Customization() {
                             </button>
                             <button
                               type="button"
-                              onClick={() => {
-                                pushHistorySnapshot();
-                                setTextElements(prev => prev.filter(t => t.id !== textEl.id));
-                              }}
+                              onClick={() => deleteTextLayer(textEl.id)}
                               className="text-gray-500 hover:text-neon-pink transition-colors text-xs font-bold uppercase tracking-widest pl-1.5"
                             >
                               Remove
@@ -2523,7 +2662,9 @@ export function Customization() {
                               <label className="block text-[8px] font-bold text-gray-400 uppercase tracking-[0.3em] mb-2">Text</label>
                               <textarea
                                 value={textEl.text}
-                                onChange={(e) => setTextElements(prev => prev.map(t => t.id === textEl.id ? { ...t, text: e.target.value } : t))}
+                                onFocus={beginContinuousEdit}
+                                onChange={(e) => updateTextLayer(textEl.id, { text: e.target.value }, { recordHistory: false })}
+                                onBlur={endContinuousEdit}
                                 rows={2}
                                 className="w-full resize-y bg-cyber-black border border-white/20 text-white text-sm p-2 rounded outline-none focus:border-neon-pink"
                                 placeholder="Type here... (use a new line for multi-line text)"
@@ -2536,7 +2677,9 @@ export function Customization() {
                                 min={12}
                                 max={200}
                                 value={textEl.fontSize}
-                                onChange={(e) => setTextElements(prev => prev.map(t => t.id === textEl.id ? { ...t, fontSize: Number(e.target.value) } : t))}
+                                onPointerDown={beginContinuousEdit}
+                                onChange={(e) => updateTextLayer(textEl.id, { fontSize: Number(e.target.value) }, { recordHistory: false })}
+                                onPointerUp={endContinuousEdit}
                                 className="w-full accent-[var(--color-neon-pink)]"
                               />
                             </div>
@@ -2547,7 +2690,9 @@ export function Customization() {
                                 min={-180}
                                 max={180}
                                 value={textEl.rotation || 0}
-                                onChange={(e) => setTextElements(prev => prev.map(t => t.id === textEl.id ? { ...t, rotation: Number(e.target.value) } : t))}
+                                onPointerDown={beginContinuousEdit}
+                                onChange={(e) => updateTextLayer(textEl.id, { rotation: Number(e.target.value) }, { recordHistory: false })}
+                                onPointerUp={endContinuousEdit}
                                 className="w-full accent-[var(--color-neon-pink)]"
                               />
                             </div>
@@ -2558,7 +2703,9 @@ export function Customization() {
                                 min={-20}
                                 max={100}
                                 value={textEl.letterSpacing || 0}
-                                onChange={(e) => setTextElements(prev => prev.map(t => t.id === textEl.id ? { ...t, letterSpacing: Number(e.target.value) } : t))}
+                                onPointerDown={beginContinuousEdit}
+                                onChange={(e) => updateTextLayer(textEl.id, { letterSpacing: Number(e.target.value) }, { recordHistory: false })}
+                                onPointerUp={endContinuousEdit}
                                 className="w-full accent-[var(--color-neon-pink)]"
                               />
                             </div>
@@ -2570,7 +2717,9 @@ export function Customization() {
                                 max={2.5}
                                 step={0.1}
                                 value={textEl.lineHeight ?? 1.2}
-                                onChange={(e) => setTextElements(prev => prev.map(t => t.id === textEl.id ? { ...t, lineHeight: Number(e.target.value) } : t))}
+                                onPointerDown={beginContinuousEdit}
+                                onChange={(e) => updateTextLayer(textEl.id, { lineHeight: Number(e.target.value) }, { recordHistory: false })}
+                                onPointerUp={endContinuousEdit}
                                 className="w-full accent-[var(--color-neon-pink)]"
                               />
                             </div>
@@ -2581,7 +2730,7 @@ export function Customization() {
                                   <button
                                     key={align}
                                     type="button"
-                                    onClick={() => setTextElements(prev => prev.map(t => t.id === textEl.id ? { ...t, textAlign: align } : t))}
+                                    onClick={() => updateTextLayer(textEl.id, { textAlign: align })}
                                     className={cn(
                                       "flex-1 px-3 py-1.5 rounded border text-[9px] font-bold uppercase tracking-widest transition-colors",
                                       (textEl.textAlign ?? 'center') === align
@@ -2600,7 +2749,9 @@ export function Customization() {
                                 <input
                                   type="color"
                                   value={textEl.color}
-                                  onChange={(e) => setTextElements(prev => prev.map(t => t.id === textEl.id ? { ...t, color: e.target.value } : t))}
+                                  onFocus={beginContinuousEdit}
+                                  onChange={(e) => updateTextLayer(textEl.id, { color: e.target.value }, { recordHistory: false })}
+                                  onBlur={endContinuousEdit}
                                   className="w-full h-8 rounded bg-transparent cursor-pointer"
                                 />
                               </div>
@@ -2608,7 +2759,7 @@ export function Customization() {
                                 <label className="block text-[8px] font-bold text-gray-400 uppercase tracking-[0.3em] mb-2">Font</label>
                                 <select
                                   value={textEl.fontFamily}
-                                  onChange={(e) => setTextElements(prev => prev.map(t => t.id === textEl.id ? { ...t, fontFamily: e.target.value } : t))}
+                                  onChange={(e) => updateTextLayer(textEl.id, { fontFamily: e.target.value })}
                                   className="w-full bg-cyber-black border border-white/20 text-white text-xs p-1.5 rounded outline-none focus:border-neon-pink"
                                   style={{ fontFamily: textEl.fontFamily }}
                                 >
@@ -2624,14 +2775,14 @@ export function Customization() {
                             <div className="flex items-center gap-4 mt-2">
                               <button
                                 type="button"
-                                onClick={() => setTextElements(prev => prev.map(t => t.id === textEl.id ? { ...t, isBold: !t.isBold } : t))}
+                                onClick={() => updateTextLayer(textEl.id, { isBold: !textEl.isBold })}
                                 className={cn("px-3 py-1.5 rounded border text-xs font-bold transition-colors", textEl.isBold ? "bg-neon-blue text-cyber-black border-neon-blue" : "bg-transparent text-gray-400 border-white/20 hover:border-white/50")}
                               >
                                 BOLD
                               </button>
                               <button
                                 type="button"
-                                onClick={() => setTextElements(prev => prev.map(t => t.id === textEl.id ? { ...t, isItalic: !t.isItalic } : t))}
+                                onClick={() => updateTextLayer(textEl.id, { isItalic: !textEl.isItalic })}
                                 className={cn("px-3 py-1.5 rounded border text-xs italic transition-colors", textEl.isItalic ? "bg-neon-pink text-white border-neon-pink" : "bg-transparent text-gray-400 border-white/20 hover:border-white/50")}
                               >
                                 ITALIC
@@ -2918,6 +3069,7 @@ export function Customization() {
                     <button
                       type="button"
                       onClick={() => {
+                        pushHistorySnapshot();
                         setAppliedCropOverride(null);
                         setDraftCropRect({ left: 0, top: 0, width: 100, height: 100 });
                         setIsCropStudioOpen(false);
@@ -2937,6 +3089,7 @@ export function Customization() {
                             ? null
                             : draftCropRect;
 
+                        pushHistorySnapshot();
                         setAppliedCropOverride(nextCrop);
                         setIsCropStudioOpen(false);
                       }}

@@ -116,6 +116,14 @@ export interface TextElement {
   layerName?: string;
 }
 
+/** Layer model (MVP, deliberate scope decision — not a limitation to "fix" later without a
+ * product decision to do so): each print part has exactly one image layer (`imageUrl` /
+ * `sourceArtworkId` / `sourceGeneratedImageId` — a single artwork, never a stack of images) plus
+ * any number of independent text layers (`textElements`). There is no unified image+text layer
+ * list, no multi-image-layer support, and no plans to add either here — a customer places one
+ * artwork per part and annotates it with text. If a future requirement genuinely needs multiple
+ * independent images on one part, that's a new data model, not an extension of this one; don't
+ * bolt it onto PartCustomization/TextElement. See services.py's equivalent note on the backend. */
 export interface PartCustomization {
   sourceArtworkId?: number;
   sourceGeneratedImageId?: number;
@@ -357,4 +365,28 @@ export interface DesignProject {
   placements: DesignPlacement[];
   createdAt: string;
   updatedAt: string;
+}
+
+/** Status of one part's production print-file generation attempt. Deliberately a distinct type
+ * from any mockup-preview status — a print file is the transparent-background, production-
+ * resolution artwork+text-only asset a paid order would need, never the on-screen preview
+ * render, so the two must never be labelled with the same status value in the UI. */
+export interface PrintFileResult {
+  partName: string;
+  status: 'queued' | 'processing' | 'completed' | 'failed';
+  printFileUrl?: string | null;
+  width?: number | null;
+  height?: number | null;
+  dpi?: number | null;
+  /** True when this result reused an already-generated file because nothing printable had
+   * changed since the last generation, rather than rendering a fresh one. */
+  reused?: boolean;
+  error?: string | null;
+}
+
+/** Response shape from both the generate and status print-file endpoints. */
+export interface PrintFileBatchResult {
+  projectId: number;
+  status: 'completed' | 'failed';
+  parts: PrintFileResult[];
 }

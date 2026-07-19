@@ -12,6 +12,8 @@ import type {
   MockupTemplate,
   MockupTemplatePart,
   PlacementOverride,
+  PrintFileBatchResult,
+  PrintFileResult,
   Product,
   ProductVariant,
   TextElement,
@@ -1043,4 +1045,63 @@ export async function duplicateDesignProject(id: number) {
     method: "POST",
   });
   return mapDesignProject(project);
+}
+
+interface BackendPrintFileResult {
+  part_name: string;
+  status: "queued" | "processing" | "completed" | "failed";
+  print_file_url: string | null;
+  width: number | null;
+  height: number | null;
+  dpi: number | null;
+  reused: boolean;
+  error: string | null;
+}
+
+interface BackendPrintFileBatchResult {
+  project_id: number;
+  status: "completed" | "failed";
+  parts: BackendPrintFileResult[];
+}
+
+function mapPrintFileResult(part: BackendPrintFileResult): PrintFileResult {
+  return {
+    partName: part.part_name,
+    status: part.status,
+    printFileUrl: part.print_file_url ? resolveAssetUrl(part.print_file_url) : null,
+    width: part.width,
+    height: part.height,
+    dpi: part.dpi,
+    reused: part.reused,
+    error: part.error,
+  };
+}
+
+function mapPrintFileBatchResult(result: BackendPrintFileBatchResult): PrintFileBatchResult {
+  return {
+    projectId: result.project_id,
+    status: result.status,
+    parts: result.parts.map(mapPrintFileResult),
+  };
+}
+
+/** Triggers production print-file generation (or signature-based reuse) for every configured,
+ * printable part of a saved design project — never a preview render. This is deliberately a
+ * separate, explicit action from normal editing: production files are only generated when the
+ * caller asks for them (e.g. a "Generate Print Files" / final-validation action), not on every
+ * autosave or preview refresh. Does not create a Printify product or submit anything for
+ * fulfilment — that remains out of scope here. */
+export async function generatePrintFiles(projectId: number) {
+  const result = await sendJson<BackendPrintFileBatchResult>(
+    `/generator/design-projects/${projectId}/generate-print-files/`,
+    { method: "POST" },
+  );
+  return mapPrintFileBatchResult(result);
+}
+
+/** Read-only status of each configured part's most recent print-file generation attempt,
+ * without triggering a new one. */
+export async function getPrintFiles(projectId: number) {
+  const result = await fetchJson<BackendPrintFileBatchResult>(`/generator/design-projects/${projectId}/print-files/`);
+  return mapPrintFileBatchResult(result);
 }
