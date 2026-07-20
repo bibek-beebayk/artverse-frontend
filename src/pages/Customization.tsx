@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate, Link, useLocation, useSearchParams } from 'react-router-dom';
+import { useNavigate, Link, useLocation, useParams, useSearchParams } from 'react-router-dom';
 import { useCart } from '../context/CartContext.tsx';
 import { useAuth } from '../context/AuthContext.tsx';
 import { motion, AnimatePresence } from 'motion/react';
@@ -30,20 +30,29 @@ import {
   FileOutput,
   ExternalLink,
   RefreshCw,
+  Image as ImageIcon,
+  Upload,
+  Wand2,
+  Trash2,
+  X,
+  Search,
 } from 'lucide-react';
 import { cn } from '../lib/utils.ts';
-import { ImageModal } from '../components/Common.tsx';
+import { ImageModal, SmartImage } from '../components/Common.tsx';
 import { TShirtTemplate } from '../components/TShirtTemplate.tsx';
 import {
   ApiError,
   createMockupRender,
+  getArtworksPage,
   getDesignProject,
   createDesignProject,
-  replaceDesignProject,
-  getProducts,
+  getMockupTemplates,
   getProductVariants,
+  getProducts,
+  replaceDesignProject,
   generatePrintFiles,
   getPrintFiles,
+  uploadDesignAsset,
 } from '../lib/api.ts';
 import {
   isPartConfigured,
@@ -61,7 +70,17 @@ import {
 } from '../lib/printFileHelpers.ts';
 import { formatStartingPrice, parseStartingPrice } from '../lib/pricing.ts';
 import { describeSellableSelectionReason, validateSellableSelection } from '../lib/sellableSelection.ts';
-import type { ActiveCustomization, CropOverride, PartCustomization, PlacementOverride, Product, ProductVariant, TextElement } from '../types.ts';
+import { createDefaultArtworkTransform, type FixedPrintArea } from '../lib/artworkTransform.ts';
+import type {
+  ActiveCustomization,
+  Artwork,
+  CropOverride,
+  PartCustomization,
+  PlacementOverride,
+  Product,
+  ProductVariant,
+  TextElement,
+} from '../types.ts';
 
 type SaveStatus = 'idle' | 'dirty' | 'saving' | 'saved' | 'error';
 
@@ -302,6 +321,13 @@ export function Customization() {
 
   // --- Saved design project: loading, naming, save status ---
   const projectIdParam = searchParams.get('project');
+  // /customize/product/:productId — the Shop-catalogue entry point (section 1/16 of the
+  // Shop-to-Customization redesign). Distinct from `projectIdParam` above (reopening a saved
+  // project) and from the plain `/customize` + CartContext.setActiveCustomization state path
+  // (still used by Generator.tsx's own, unrelated design-first flow) — these three modes are
+  // never mixed: whichever populates `activeCustomization`/`routeCustomization` first, for a
+  // given navigation, is authoritative.
+  const routeProductId = useParams<{ productId?: string }>().productId;
   const [currentProjectId, setCurrentProjectId] = useState<number | undefined>(undefined);
   const [projectName, setProjectName] = useState('');
   const [isLoadingProject, setIsLoadingProject] = useState(false);
@@ -325,6 +351,7 @@ export function Customization() {
   const skipNextVariantStaleRef = useRef(true);
   const pendingSaveAfterLoginRef = useRef(false);
   const loadedProjectIdRef = useRef<number | undefined>(undefined);
+  const loadedProductIdRef = useRef<string | undefined>(undefined);
 
   // --- Undo/redo: one history entry per *gesture* (a whole drag, not every pointermove), and
   // one per discrete action (add/remove text, colour/size change, part switch). Kept as a ref
@@ -343,6 +370,13 @@ export function Customization() {
     loadedProjectIdRef.current = idFromUrl;
     setIsLoadingProject(true);
     setProjectLoadError(null);
+    // Clear whatever customization is currently showing (a different, previously-loaded
+    // project or product — including one restored from localStorage on mount) BEFORE fetching
+    // the new one. Without this, `customization` (activeCustomization ?? routeCustomization)
+    // stays truthy with the OLD data for the whole fetch, so the "Loading customization" state
+    // never shows and the screen looks like it's stuck on the wrong project/template instead of
+    // loading — the actual fetch below is fast; the stale screen was the bug, not slowness.
+    setActiveCustomization(null);
 
     // Resolved from the real Product's server-computed starting price (never the template's
     // config, which is preview-only and no longer treated as a selling price — see
@@ -380,8 +414,115 @@ export function Customization() {
 
     return () => {
       isCancelled = true;
+      // React 18 StrictMode double-invokes effects in development: mount -> cleanup -> mount
+      // again. Without this reset, the *first* invocation's cleanup fires (marking its own
+      // isCancelled true) before the fetch resolves, but the guard above still sees
+      // loadedProjectIdRef.current === idFromUrl on the second invocation and skips re-fetching
+      // — so the one in-flight request that actually exists is permanently ignored by its own
+      // `if (isCancelled) return` checks, and the screen is stuck loading forever. Resetting the
+      // ref here (only if nothing else has already claimed it) lets the next invocation retry.
+      if (loadedProjectIdRef.current === idFromUrl) {
+        loadedProjectIdRef.current = undefined;
+      }
     };
   }, [projectIdParam, setActiveCustomization]);
+
+  // /customize/product/:productId — opens a BLANK customization for a real, sellable product:
+  // its first sellable variant is pre-selected, but no artwork/placement exists yet (section 1/5
+  // of the Shop-to-Customization redesign — "choose artwork inside the customization screen,"
+  // never before). Never runs if a saved project is being loaded via ?project= above (that
+  // effect and this one are mutually exclusive per navigation, guarded by their own ref).
+  useEffect(() => {
+    if (!routeProductId || loadedProductIdRef.current === routeProductId) {
+      return;
+    }
+
+    let isCancelled = false;
+    loadedProductIdRef.current = routeProductId;
+    setIsLoadingProject(true);
+    setProjectLoadError(null);
+    // See the identical comment on the ?project= loader above — clear stale customization
+    // (a different product/project, or one restored from localStorage) before fetching, so a
+    // product-to-product navigation doesn't keep showing the previous product's template while
+    // this resolves.
+    setActiveCustomization(null);
+
+    Promise.all([getProducts(), getMockupTemplates()])
+      .then(([products, templates]) => {
+        if (isCancelled) return;
+
+        const product = products.find((candidate) => candidate.id === routeProductId);
+        if (!product) {
+          setProjectLoadError('This product is no longer available.');
+          return;
+        }
+
+        const defaultVariant = product.variants?.find((variant) => variant.isAvailable && variant.isSellable) ?? null;
+        const sellable = validateSellableSelection(product, defaultVariant);
+        if (!sellable.selection) {
+          setProjectLoadError(
+            describeSellableSelectionReason(sellable.reason) ?? 'This product is not currently available for customization.'
+          );
+          return;
+        }
+
+        const template = templates.find((candidate) => candidate.id === product.mockupTemplateId);
+        if (!template) {
+          setProjectLoadError('This product is not linked to a customizable template.');
+          return;
+        }
+
+        const blankCustomization: ActiveCustomization = {
+          artworkId: '',
+          userPrompt: '',
+          imageUrl: '',
+          templateId: template.id,
+          templateName: template.name,
+          productType: template.productTypeDisplay,
+          productId: Number(product.id),
+          selectedVariantId: sellable.selection.variant.id,
+          mockupImageUrl: template.baseImage || '',
+          templateBaseImageUrl: template.baseImage,
+          templateMaskImageUrl: template.maskImage,
+          templateShadowLayerUrl: template.shadowLayer,
+          templateHighlightLayerUrl: template.highlightLayer,
+          templateParts: template.parts,
+          startingPrice: sellable.selection.startingPrice,
+          sizes: product.availableSizes && product.availableSizes.length > 0 ? product.availableSizes : [...template.supportedSizes],
+          colours:
+            product.availableColors && product.availableColors.length > 0 ? product.availableColors : [...template.supportedColors],
+          basePlacement: null,
+          textElements: [],
+          partsConfig: {},
+        };
+
+        skipNextDirtyRef.current = true;
+        skipNextPartDirtyRef.current = true;
+        setActiveCustomization(blankCustomization);
+        setCurrentProjectId(undefined);
+        setProjectName('');
+        setSaveStatus('idle');
+      })
+      .catch((error) => {
+        if (isCancelled) return;
+        loadedProductIdRef.current = undefined;
+        setProjectLoadError(error instanceof Error ? error.message : 'Could not load this product.');
+      })
+      .finally(() => {
+        if (!isCancelled) setIsLoadingProject(false);
+      });
+
+    return () => {
+      isCancelled = true;
+      // See the identical comment on the ?project= loader above — without this reset, React 18
+      // StrictMode's dev-mode double-invoke leaves the one real in-flight request permanently
+      // ignored by its own isCancelled checks, and the guard blocks the second invocation from
+      // retrying, so the screen never leaves the loading state.
+      if (loadedProductIdRef.current === routeProductId) {
+        loadedProductIdRef.current = undefined;
+      }
+    };
+  }, [routeProductId, setActiveCustomization]);
 
   // Mark the project dirty on any change that would need saving — but not on the render
   // right after we just loaded or saved (skipNextDirtyRef swallows exactly one run).
@@ -459,6 +600,255 @@ export function Customization() {
   ) => {
     setPartsConfig((prev) => withPartUpdate(prev, partName, changes, options));
   };
+
+  // --- Artwork action menu: Choose from Gallery / Upload Design / Generate with AI / Remove ---
+  // (section 6-13 of the Shop-to-Customization redesign). Every source funnels through
+  // applyArtworkToActivePart so there's one place that decides the default placement, clears
+  // any previous source (a part has exactly one artwork source at a time — gallery XOR upload
+  // XOR AI), and marks the part dirty/print-file-stale — never three slightly different copies.
+  const [isGallerySelectorOpen, setIsGallerySelectorOpen] = useState(false);
+  const [isAiPanelOpen, setIsAiPanelOpen] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const applyArtworkToActivePart = (source: {
+    sourceArtworkId?: number;
+    sourceGeneratedImageId?: number;
+    sourceAssetId?: number;
+    imageUrl: string;
+    width?: number | null;
+    height?: number | null;
+  }) => {
+    const printArea: FixedPrintArea = activeFixedPrintArea ?? { x: 0, y: 0, width: 800, height: 800 };
+    const transform =
+      source.width && source.height
+        ? createDefaultArtworkTransform(source.width, source.height, printArea)
+        : { x: printArea.x, y: printArea.y, width: printArea.width, height: printArea.height };
+
+    const placementOverride: PlacementOverride = {
+      x: transform.x,
+      y: transform.y,
+      width: transform.width,
+      height: transform.height,
+      fit: 'contain',
+      rotation: 0,
+      opacity: 1,
+      cornerRadius: 0,
+    };
+
+    pushHistorySnapshot();
+    // Explicitly clears whichever of the three source-id fields this call didn't set — a part
+    // has exactly one artwork source at a time, switching from e.g. a Gallery pick to an Upload
+    // must not leave the old sourceArtworkId dangling alongside the new sourceAssetId.
+    updatePartCustomization(activePart, {
+      sourceArtworkId: source.sourceArtworkId,
+      sourceGeneratedImageId: source.sourceGeneratedImageId,
+      sourceAssetId: source.sourceAssetId,
+      imageUrl: source.imageUrl,
+      userPrompt: undefined,
+      placementOverride,
+      cropOverride: undefined,
+    });
+
+    setPlacementDraft({ x: transform.x, y: transform.y, width: transform.width, height: transform.height });
+    setPlacementRotationDraft(0);
+    setCornerRadius(0);
+    setAppliedCropOverride(null);
+    setDraftCropRect({ left: 0, top: 0, width: 100, height: 100 });
+    setDesignDimensions(source.width && source.height ? { width: source.width, height: source.height } : null);
+    setIsPreviewAssetLoading(true);
+  };
+
+  const removeActivePartArtwork = () => {
+    pushHistorySnapshot();
+    updatePartCustomization(activePart, {
+      sourceArtworkId: undefined,
+      sourceGeneratedImageId: undefined,
+      sourceAssetId: undefined,
+      imageUrl: undefined,
+      userPrompt: undefined,
+    });
+    setDesignDimensions(null);
+  };
+
+  const handleGallerySelect = async (artwork: Artwork) => {
+    const dimensions = await readImageDimensions(artwork.imageUrl);
+    applyArtworkToActivePart({
+      sourceArtworkId: artwork.backendArtworkId,
+      imageUrl: artwork.imageUrl,
+      width: dimensions?.width,
+      height: dimensions?.height,
+    });
+    setIsGallerySelectorOpen(false);
+  };
+
+  const readImageDimensions = (url: string): Promise<{ width: number; height: number } | null> =>
+    new Promise((resolve) => {
+      const probe = new Image();
+      probe.onload = () => resolve({ width: probe.naturalWidth, height: probe.naturalHeight });
+      probe.onerror = () => resolve(null);
+      probe.src = url;
+    });
+
+  const handleFileSelected = async (file: File | null) => {
+    if (!file) return;
+    setUploadError(null);
+
+    const allowedTypes = new Set(['image/png', 'image/jpeg', 'image/webp']);
+    if (!allowedTypes.has(file.type)) {
+      setUploadError('Unsupported file type. Please upload a PNG, JPEG, or WEBP image.');
+      return;
+    }
+    const maxSizeBytes = 15 * 1024 * 1024;
+    if (file.size > maxSizeBytes) {
+      setUploadError('File is too large. Maximum is 15MB.');
+      return;
+    }
+
+    setIsUploading(true);
+    try {
+      const asset = await uploadDesignAsset(file, 'user_upload');
+      if (!asset.fileUrl) {
+        throw new Error('Upload succeeded but no file was returned.');
+      }
+      applyArtworkToActivePart({
+        sourceAssetId: asset.id,
+        imageUrl: asset.fileUrl,
+        width: asset.width,
+        height: asset.height,
+      });
+    } catch (error) {
+      setUploadError(error instanceof Error ? error.message : 'Could not upload this file. Please try again.');
+    } finally {
+      setIsUploading(false);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+    }
+  };
+
+  // "Generate with AI" — a self-contained, minimal reproduction of Generator.tsx's own
+  // client-side Gemini call (prompt + aspect ratio -> data: URL), embedded directly in the
+  // customization action menu rather than navigating away (section 12). Deliberately NOT a
+  // shared hook with Generator.tsx: that page's generation flow has its own unrelated
+  // state/Firestore-save behaviour, and duplicating this one, stable, ~20-line API call is
+  // lower-risk than refactoring two pages to share it.
+  const AI_ASPECT_RATIO_OPTIONS = [
+    { value: '1:1', label: 'Square' },
+    { value: '4:3', label: 'Classic' },
+    { value: '3:4', label: 'Portrait' },
+    { value: '16:9', label: 'Cinematic' },
+    { value: '9:16', label: 'Story' },
+  ] as const;
+  const geminiApiKey = import.meta.env.VITE_GEMINI_API_KEY;
+  const [aiPrompt, setAiPrompt] = useState('');
+  const [aiAspectRatio, setAiAspectRatio] = useState<(typeof AI_ASPECT_RATIO_OPTIONS)[number]['value']>('1:1');
+  const [aiGenerating, setAiGenerating] = useState(false);
+  const [aiApplying, setAiApplying] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
+  const [aiGeneratedImage, setAiGeneratedImage] = useState<string | null>(null);
+
+  const handleAiGenerate = async () => {
+    if (!aiPrompt.trim()) return;
+    if (!geminiApiKey) {
+      setAiError('AI generation is not configured for this environment.');
+      return;
+    }
+    setAiGenerating(true);
+    setAiError(null);
+    setAiGeneratedImage(null);
+    try {
+      const { GoogleGenAI } = await import('@google/genai');
+      const ai = new GoogleGenAI({ apiKey: geminiApiKey });
+      const response = await ai.models.generateContent({
+        model: 'gemini-2.5-flash-image',
+        contents: { parts: [{ text: `Digital art, cyberpunk style, neon lights, highly detailed, futuristic: ${aiPrompt}` }] },
+        config: { imageConfig: { aspectRatio: aiAspectRatio } },
+      });
+
+      const parts = response.candidates?.[0]?.content?.parts ?? [];
+      const imagePart = parts.find((part) => part.inlineData?.data);
+      if (!imagePart?.inlineData?.data) {
+        throw new Error('No image was returned. Try a different prompt.');
+      }
+      setAiGeneratedImage(`data:image/png;base64,${imagePart.inlineData.data}`);
+    } catch (error) {
+      setAiError(error instanceof Error ? error.message : 'Image generation failed. Please try again.');
+    } finally {
+      setAiGenerating(false);
+    }
+  };
+
+  const handleAiSelectGenerated = async () => {
+    if (!aiGeneratedImage) return;
+    setAiApplying(true);
+    setAiError(null);
+    try {
+      const blob = await fetch(aiGeneratedImage).then((response) => response.blob());
+      const asset = await uploadDesignAsset(blob, 'ai_generated', aiPrompt.trim().slice(0, 255));
+      if (!asset.fileUrl) {
+        throw new Error('Generation succeeded but the image could not be saved.');
+      }
+      applyArtworkToActivePart({
+        sourceAssetId: asset.id,
+        imageUrl: asset.fileUrl,
+        width: asset.width,
+        height: asset.height,
+      });
+      setIsAiPanelOpen(false);
+      setAiPrompt('');
+      setAiGeneratedImage(null);
+    } catch (error) {
+      setAiError(error instanceof Error ? error.message : 'Could not save this generated image. Please try again.');
+    } finally {
+      setAiApplying(false);
+    }
+  };
+
+  // --- Gallery selector: paginated, searchable admin-uploaded designs (section 7) ---
+  const [galleryArtworks, setGalleryArtworks] = useState<Artwork[]>([]);
+  const [galleryLoading, setGalleryLoading] = useState(false);
+  const [galleryError, setGalleryError] = useState<string | null>(null);
+  const [gallerySearchInput, setGallerySearchInput] = useState('');
+  const [gallerySearch, setGallerySearch] = useState('');
+  const [galleryPage, setGalleryPage] = useState(1);
+  const [galleryTotalPages, setGalleryTotalPages] = useState(1);
+
+  useEffect(() => {
+    if (!isGallerySelectorOpen) return;
+    const debounce = setTimeout(() => {
+      setGallerySearch(gallerySearchInput);
+      setGalleryPage(1);
+    }, 400);
+    return () => clearTimeout(debounce);
+  }, [gallerySearchInput, isGallerySelectorOpen]);
+
+  useEffect(() => {
+    if (!isGallerySelectorOpen) return;
+    let isCancelled = false;
+    setGalleryLoading(true);
+    setGalleryError(null);
+
+    getArtworksPage({ page: galleryPage, pageSize: 20, search: gallerySearch || undefined })
+      .then((response) => {
+        if (isCancelled) return;
+        setGalleryArtworks(response.results);
+        setGalleryTotalPages(response.totalPages);
+      })
+      .catch((error) => {
+        if (isCancelled) return;
+        setGalleryError(error instanceof Error ? error.message : 'Could not load the gallery.');
+        setGalleryArtworks([]);
+      })
+      .finally(() => {
+        if (!isCancelled) setGalleryLoading(false);
+      });
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [isGallerySelectorOpen, galleryPage, gallerySearch]);
 
   useEffect(() => {
     if (!activeCustomization && routeCustomization) {
@@ -689,30 +1079,6 @@ export function Customization() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [supportedPrintAreas, activePart, customization?.templateParts]);
 
-  const previewResolvedPlacement = useMemo(() => {
-    if (!customization?.basePlacement) {
-      return null;
-    }
-
-    const activePlacement = placementDraft ?? {
-      x: customization.basePlacement.x,
-      y: customization.basePlacement.y,
-      width: customization.basePlacement.width,
-      height: customization.basePlacement.height,
-    };
-
-    return {
-      x: Math.round(activePlacement.x),
-      y: Math.round(activePlacement.y),
-      width: Math.max(MIN_PLACEMENT_SIZE, Math.round(activePlacement.width)),
-      height: Math.max(MIN_PLACEMENT_SIZE, Math.round(activePlacement.height)),
-      cornerRadius: Math.max(0, Math.round(cornerRadius)),
-      fit: customization.basePlacement.fit,
-      rotation: placementRotationDraft ?? customization.basePlacement.rotation,
-      opacity: customization.basePlacement.opacity,
-    };
-  }, [cornerRadius, customization, placementDraft, placementRotationDraft]);
-
   /** The admin-configured, non-draggable print boundary for the active part — derived purely
    * from `activeTemplatePart.config.placement` (falling back to the template's top-level
    * basePlacement when the part has no explicit config), never from `placementDraft`. Dragging,
@@ -733,6 +1099,37 @@ export function Customization() {
       height: configuredArea.height,
     };
   }, [activeTemplatePart, customization?.basePlacement]);
+
+  const previewResolvedPlacement = useMemo(() => {
+    // `customization.basePlacement` is only ever populated for the legacy single-image flow
+    // (opened straight from the Generator with a design already placed). The blank
+    // Shop-to-Customization flow opens with it explicitly `null` — the per-part
+    // `activeFixedPrintArea` (admin-configured print area, or a sane default) is the real
+    // source of truth for where a freshly-applied design's box starts out. `placementDraft`,
+    // once set (by picking/dragging/resizing artwork), always wins over either fallback.
+    const fallbackPlacement = customization?.basePlacement ?? activeFixedPrintArea;
+    if (!placementDraft && !fallbackPlacement) {
+      return null;
+    }
+
+    const activePlacement = placementDraft ?? {
+      x: fallbackPlacement!.x,
+      y: fallbackPlacement!.y,
+      width: fallbackPlacement!.width,
+      height: fallbackPlacement!.height,
+    };
+
+    return {
+      x: Math.round(activePlacement.x),
+      y: Math.round(activePlacement.y),
+      width: Math.max(MIN_PLACEMENT_SIZE, Math.round(activePlacement.width)),
+      height: Math.max(MIN_PLACEMENT_SIZE, Math.round(activePlacement.height)),
+      cornerRadius: Math.max(0, Math.round(cornerRadius)),
+      fit: customization?.basePlacement?.fit ?? 'contain',
+      rotation: placementRotationDraft ?? customization?.basePlacement?.rotation ?? 0,
+      opacity: customization?.basePlacement?.opacity ?? 1,
+    };
+  }, [activeFixedPrintArea, cornerRadius, customization, placementDraft, placementRotationDraft]);
 
   const previewFixedPrintAreaStyle = useMemo(() => {
     if (!activeFixedPrintArea || !templateDimensions) {
@@ -1495,30 +1892,18 @@ export function Customization() {
     }
   };
 
-  if (!customization) {
-    return (
-      <div className="max-w-7xl mx-auto px-6 py-32 text-center text-white">
-        <h2 className="text-3xl font-display font-black text-white uppercase tracking-widest mb-4">No Customization Selected</h2>
-        <p className="text-gray-500 mb-8 max-w-sm mx-auto uppercase tracking-wider text-xs">Generate an artwork on the Dream page to kickstart custom product wrapping.</p>
-        <Link to="/generator" className="inline-flex items-center gap-2 px-8 py-4 bg-neon-purple text-white font-bold uppercase tracking-widest rounded-full hover:neon-glow-purple transition-all">
-          Launch Dream Machine
-        </Link>
-      </div>
-    );
-  }
-
-  // Render product preview configuration based on choices. Deliberately sourced from the
-  // validated sellable selection (never customization.startingPrice directly) — if the currently
-  // selected colour/size isn't actually sellable, there's no honest per-unit price to multiply,
-  // and the UI must say so rather than showing a stale/misleading number.
-  const unitStartingPrice = sellableSelection.selection?.startingPrice ?? null;
-  const totalPrice = unitStartingPrice !== null ? (unitStartingPrice * quantity).toFixed(2) : null;
+  // Hooks below must run on every render regardless of whether `customization` has resolved
+  // yet (React's Rules of Hooks) — they used to live after the `if (!customization)` early
+  // return further down, which meant the loading render called fewer hooks than the loaded
+  // render and crashed with "Rendered more hooks than during the previous render." Each one
+  // already null-guards `customization` internally, so hoisting them here is safe.
   const previewTemplateUrl =
-    activeTemplatePart?.baseImage || customization.templateBaseImageUrl || customization.mockupImageUrl;
-  const previewShadowLayerUrl = activeTemplatePart?.shadowLayer || customization.templateShadowLayerUrl;
-  const previewHighlightLayerUrl = activeTemplatePart?.highlightLayer || customization.templateHighlightLayerUrl;
-  const supportsLiveTemplatePreview = Boolean(previewTemplateUrl && previewResolvedPlacement);
-  const showPreviewLoading = previewLoading || isPreviewAssetLoading;
+    activeTemplatePart?.baseImage || customization?.templateBaseImageUrl || customization?.mockupImageUrl;
+  // The design image actually showing on the active part right now — each part has its own
+  // independent artwork (see partsConfig), so this must never be the fixed, load-time-only
+  // `customization.imageUrl` alone. Falls back to it only for the legacy single-image flow
+  // (opened straight from the Generator) where a part may not have its own entry yet.
+  const activePartImageUrl = partsConfig[activePart]?.imageUrl || customization?.imageUrl || undefined;
 
   useEffect(() => {
     if (!customization?.basePlacement || !designDimensions) {
@@ -1578,7 +1963,7 @@ export function Customization() {
 
     const assetUrls = Array.from(
       new Set(
-        [previewTemplateUrl, customization.imageUrl].filter(
+        [previewTemplateUrl, activePartImageUrl].filter(
           (value): value is string => Boolean(value && value.trim())
         )
       )
@@ -1611,7 +1996,7 @@ export function Customization() {
       image.onload = () => {
         if (
           !isCancelled &&
-          assetUrl === customization.imageUrl &&
+          assetUrl === activePartImageUrl &&
           image.naturalWidth > 0 &&
           image.naturalHeight > 0
         ) {
@@ -1652,17 +2037,93 @@ export function Customization() {
     return () => {
       isCancelled = true;
     };
-  }, [customization, previewTemplateUrl]);
+  }, [customization, previewTemplateUrl, activePartImageUrl]);
 
-  
+  // If a save/finalize attempt hit a 401 (expired session) and the user re-authenticated,
+  // automatically retry instead of making them click Save again and lose the moment.
+  useEffect(() => {
+    if (user && pendingSaveAfterLoginRef.current) {
+      pendingSaveAfterLoginRef.current = false;
+      void handleSaveDesign();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user]);
+
+  if (!customization) {
+    // A /customize/product/:productId or /customize?project=<id> navigation is actively
+    // resolving — show that instead of the generic "nothing selected" screen, which would
+    // otherwise flash (or persist, on error) in front of what's actually the primary entry
+    // point into this page now (Shop.tsx's "Customize" button).
+    if (routeProductId || projectIdParam) {
+      if (projectLoadError) {
+        return (
+          <div className="max-w-7xl mx-auto px-6 py-32 text-center text-white">
+            <h2 className="text-3xl font-display font-black text-white uppercase tracking-widest mb-4">
+              Could Not Open Customization
+            </h2>
+            <p className="text-gray-500 mb-8 max-w-sm mx-auto uppercase tracking-wider text-xs">{projectLoadError}</p>
+            <Link
+              to="/shop"
+              className="inline-flex items-center gap-2 px-8 py-4 bg-neon-purple text-white font-bold uppercase tracking-widest rounded-full hover:neon-glow-purple transition-all"
+            >
+              Back to Shop
+            </Link>
+          </div>
+        );
+      }
+      return (
+        <div className="max-w-7xl mx-auto px-6 py-32 text-center text-white">
+          <Loader2 size={28} className="mx-auto mb-4 animate-spin text-neon-pink" />
+          <p className="text-xs font-bold uppercase tracking-[0.3em] text-gray-500">Loading customization</p>
+        </div>
+      );
+    }
+
+    return (
+      <div className="max-w-7xl mx-auto px-6 py-32 text-center text-white">
+        <h2 className="text-3xl font-display font-black text-white uppercase tracking-widest mb-4">No Customization Selected</h2>
+        <p className="text-gray-500 mb-8 max-w-sm mx-auto uppercase tracking-wider text-xs">Generate an artwork on the Dream page to kickstart custom product wrapping, or pick a product from the Shop.</p>
+        <div className="flex flex-wrap items-center justify-center gap-3">
+          <Link to="/generator" className="inline-flex items-center gap-2 px-8 py-4 bg-neon-purple text-white font-bold uppercase tracking-widest rounded-full hover:neon-glow-purple transition-all">
+            Launch Dream Machine
+          </Link>
+          <Link to="/shop" className="inline-flex items-center gap-2 px-8 py-4 border border-white/15 text-white font-bold uppercase tracking-widest rounded-full hover:border-white transition-all">
+            Browse Shop
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
+  // Render product preview configuration based on choices. Deliberately sourced from the
+  // validated sellable selection (never customization.startingPrice directly) — if the currently
+  // selected colour/size isn't actually sellable, there's no honest per-unit price to multiply,
+  // and the UI must say so rather than showing a stale/misleading number.
+  const unitStartingPrice = sellableSelection.selection?.startingPrice ?? null;
+  const totalPrice = unitStartingPrice !== null ? (unitStartingPrice * quantity).toFixed(2) : null;
+  const previewShadowLayerUrl = activeTemplatePart?.shadowLayer || customization.templateShadowLayerUrl;
+  const previewHighlightLayerUrl = activeTemplatePart?.highlightLayer || customization.templateHighlightLayerUrl;
+  const supportsLiveTemplatePreview = Boolean(previewTemplateUrl && previewResolvedPlacement);
+  const showPreviewLoading = previewLoading || isPreviewAssetLoading;
+
+  // Whether the ACTIVE part currently has an image artwork attached — deliberately excludes
+  // text-only parts (section 13: the empty state is about "no design image," not "nothing at
+  // all"). Drives the empty-state overlay and which artwork-specific controls stay enabled.
+  const activePartHasImage = Boolean(
+    partsConfig[activePart]?.sourceArtworkId ||
+      partsConfig[activePart]?.sourceGeneratedImageId ||
+      partsConfig[activePart]?.sourceAssetId ||
+      partsConfig[activePart]?.imageUrl
+  );
+
   const handleGenerateRealisticPreview = async () => {
     setIsPreviewAssetLoading(true);
     try {
       const response = await createMockupRender({
         templateId: customization.templateId,
-        artworkId: customization.sourceArtworkId,
-        sourceImageUrl: customization.imageUrl,
-        sourcePrompt: customization.userPrompt,
+        artworkId: partsConfig[activePart]?.sourceArtworkId ?? customization.sourceArtworkId,
+        sourceImageUrl: activePartImageUrl,
+        sourcePrompt: partsConfig[activePart]?.userPrompt ?? customization.userPrompt,
         variantColor: selectedColour,
         variantSize: selectedSize,
         placementOverride: previewResolvedPlacement ?? undefined,
@@ -1712,7 +2173,12 @@ export function Customization() {
       name: projectName,
       mockupTemplateId: customization.templateId,
       productId: customization.productId,
-      selectedVariantId: customization.selectedVariantId,
+      // The variant actually resolved from the CURRENTLY selected colour/size — not
+      // customization.selectedVariantId, which is only ever the value the customization was
+      // first opened/loaded with and never updates as the user changes colour/size in the
+      // editor. Falls back to that original value only if no live variant has resolved yet
+      // (e.g. productVariants hasn't loaded).
+      selectedVariantId: selectedVariant?.id ?? customization.selectedVariantId,
       selectedColor: selectedColour,
       selectedSize,
       sourceArtworkId: customization.sourceArtworkId,
@@ -1781,16 +2247,6 @@ export function Customization() {
       setSaveError(error instanceof Error ? error.message : 'Could not save this design.');
     }
   };
-
-  // If a save/finalize attempt hit a 401 (expired session) and the user re-authenticated,
-  // automatically retry instead of making them click Save again and lose the moment.
-  useEffect(() => {
-    if (user && pendingSaveAfterLoginRef.current) {
-      pendingSaveAfterLoginRef.current = false;
-      void handleSaveDesign();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user]);
 
   /** Development/admin action: save the complete current design, then generate (or reuse)
    * production print files for it — see the "Production Print Files" panel. Never touches the
@@ -2134,17 +2590,83 @@ export function Customization() {
               })}
             </div>
           )}
-          
+
+          {/* Artwork action menu (section 6) — applies to the active part only. A left toolbar
+              on desktop, a wrapping horizontal bar on mobile; never covers the canvas below. */}
+          <div className="flex flex-wrap items-center gap-2 px-2" role="toolbar" aria-label="Artwork actions">
+            <button
+              type="button"
+              onClick={() => setIsGallerySelectorOpen(true)}
+              className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-[10px] font-bold uppercase tracking-widest text-gray-200 transition-all hover:border-neon-blue/40 hover:text-white"
+            >
+              <ImageIcon size={14} /> Choose from Gallery
+            </button>
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={isUploading}
+              className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-[10px] font-bold uppercase tracking-widest text-gray-200 transition-all hover:border-neon-blue/40 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {isUploading ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
+              {isUploading ? 'Uploading...' : 'Upload Design'}
+            </button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/png,image/jpeg,image/webp"
+              aria-label="Upload design artwork"
+              className="sr-only"
+              onChange={(event) => {
+                void handleFileSelected(event.target.files?.[0] ?? null);
+              }}
+            />
+            <button
+              type="button"
+              onClick={() => setIsAiPanelOpen(true)}
+              className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-[10px] font-bold uppercase tracking-widest text-gray-200 transition-all hover:border-neon-purple/40 hover:text-white"
+            >
+              <Wand2 size={14} /> Generate with AI
+            </button>
+            {activePartHasImage && (
+              <button
+                type="button"
+                onClick={removeActivePartArtwork}
+                className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-[10px] font-bold uppercase tracking-widest text-gray-400 transition-all hover:border-red-400/40 hover:text-red-300"
+              >
+                <Trash2 size={14} /> Remove Current Design
+              </button>
+            )}
+          </div>
+          {uploadError && (
+            <div className="mx-2 rounded-xl border border-neon-pink/25 bg-neon-pink/10 px-4 py-2.5 text-[10px] font-bold uppercase tracking-widest text-neon-pink">
+              {uploadError}
+            </div>
+          )}
+
           <div className="relative min-h-[420px] sm:min-h-[560px] xl:min-h-[760px] rounded-3xl bg-cyber-gray/30 border border-white/5 flex items-center justify-center overflow-hidden p-3 sm:p-6 xl:p-8 group shadow-[0_0_50px_rgba(0,0,0,0.8)]">
 
             <div className="absolute inset-0 bg-gradient-to-tr from-cyber-black/80 to-white/5 pointer-events-none" />
+
+            {!activePartHasImage && (
+              <div className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-4 bg-cyber-black/55 px-6 text-center backdrop-blur-[1px]">
+                <ImageIcon size={32} className="text-gray-500" />
+                <div>
+                  <p className="text-sm font-bold uppercase tracking-widest text-white">
+                    Add a design to start customizing
+                  </p>
+                  <p className="mt-1 text-[10px] uppercase tracking-widest text-gray-400">
+                    Choose from Gallery, upload your artwork, or generate one with AI.
+                  </p>
+                </div>
+              </div>
+            )}
             
             {/* Dynamic Product Renderings with user image nested */}
             {customization.productType === 'Digital Wallpaper' ? (
               <div className="relative w-full aspect-[16/10] bg-cyber-black border-4 border-gray-800 rounded-xl overflow-hidden shadow-2xl flex items-center justify-center">
-                <img 
-                  src={customization.imageUrl} 
-                  alt="Desktop Wallpaper display" 
+                <img
+                  src={activePartImageUrl}
+                  alt="Desktop Wallpaper display"
                   className="absolute w-full h-full object-cover"
                 />
                 <div className="absolute inset-x-0 bottom-0 py-2 bg-black/80 border-t border-white/10 text-center text-[8px] font-mono tracking-widest text-gray-400">
@@ -2161,9 +2683,9 @@ export function Customization() {
                   boxShadow: '0 30px 60px -12px rgba(0,0,0,0.9), 0 18px 36px -18px rgba(0,0,0,0.9)'
                 }}
               >
-                <img 
-                  src={customization.imageUrl} 
-                  alt="Generated artwork nested inside frame" 
+                <img
+                  src={activePartImageUrl}
+                  alt="Generated artwork nested inside frame"
                   className="w-full h-full object-cover"
                 />
                 {customization.productType === 'Poster' && (
@@ -2229,7 +2751,7 @@ export function Customization() {
                     )}
 
 
-                    {previewPlacementStyle && (
+                    {previewPlacementStyle && activePartImageUrl && (
                       <div
                         className={cn(
                           "absolute overflow-hidden flex items-center justify-center",
@@ -2261,7 +2783,7 @@ export function Customization() {
                             style={previewCropFrameStyle}
                           >
                             <img
-                              src={customization.imageUrl}
+                              src={activePartImageUrl}
                               alt={customization.userPrompt}
                               className="absolute pointer-events-none max-w-none"
                               style={previewDesignImageStyle}
@@ -2269,7 +2791,7 @@ export function Customization() {
                           </div>
                         ) : (
                           <img
-                            src={customization.imageUrl}
+                            src={activePartImageUrl}
                             alt={customization.userPrompt}
                             className="absolute inset-0 w-full h-full object-contain pointer-events-none"
                           />
@@ -2567,7 +3089,9 @@ export function Customization() {
                         setDraftCropRect(appliedCropOverride ?? { left: 0, top: 0, width: 100, height: 100 });
                         setIsCropStudioOpen(true);
                       }}
-                      className="px-4 py-2 text-[9px] font-extrabold uppercase tracking-widest rounded-lg border border-white/10 bg-white/5 text-gray-300 hover:text-white hover:border-white/20 transition-all"
+                      disabled={!activePartHasImage}
+                      title={activePartHasImage ? undefined : 'Add a design to this part first'}
+                      className="px-4 py-2 text-[9px] font-extrabold uppercase tracking-widest rounded-lg border border-white/10 bg-white/5 text-gray-300 hover:text-white hover:border-white/20 transition-all disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-white/10 disabled:hover:text-gray-300"
                     >
                       {hasAppliedCrop ? 'Edit Crop' : 'Open Crop Studio'}
                     </button>
@@ -3295,10 +3819,11 @@ export function Customization() {
 
             <button
               onClick={handleGenerateRealisticPreview}
-              disabled={showPreviewLoading}
+              disabled={showPreviewLoading || !activePartHasImage}
+              title={activePartHasImage ? undefined : 'Add a design to this part first'}
               className={cn(
                 "w-full flex items-center justify-center gap-3 px-8 py-4 mb-4 rounded-full font-bold uppercase tracking-widest text-xs transition-all duration-300 border-2",
-                showPreviewLoading
+                showPreviewLoading || !activePartHasImage
                   ? "border-cyber-gray text-gray-500 cursor-not-allowed"
                   : "border-neon-pink text-neon-pink hover:bg-neon-pink/10 hover:shadow-neon-pink"
               )}
@@ -3388,7 +3913,7 @@ export function Customization() {
                       <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(255,255,255,0.06),transparent_68%)]" />
                       <div className="absolute inset-0 bg-[linear-gradient(to_right,rgba(255,255,255,0.04)_1px,transparent_1px),linear-gradient(to_bottom,rgba(255,255,255,0.04)_1px,transparent_1px)] bg-[size:18%_18%] opacity-40" />
                       <img
-                        src={customization.imageUrl}
+                        src={activePartImageUrl}
                         alt={`${customization.userPrompt} crop preview`}
                         className="absolute inset-0 h-full w-full object-contain pointer-events-none"
                         onLoad={(event) => {
@@ -3416,7 +3941,7 @@ export function Customization() {
                         }}
                       >
                         <img
-                          src={customization.imageUrl}
+                          src={activePartImageUrl}
                           alt=""
                           aria-hidden="true"
                           className="absolute pointer-events-none max-w-none"
@@ -3582,6 +4107,230 @@ export function Customization() {
         imageUrl={realisticPreviewUrl || ''}
         title={`Realistic Preview of ${activePart}`}
       />
+
+      {/* Choose from Gallery selector (section 7) — paginated, searchable, admin-uploaded
+          designs only. Applying a selection never navigates away from customization. */}
+      <AnimatePresence>
+        {isGallerySelectorOpen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[200] flex items-center justify-center bg-cyber-black/85 px-4 py-8 backdrop-blur-sm"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="gallery-selector-title"
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') setIsGallerySelectorOpen(false);
+            }}
+          >
+            <motion.div
+              initial={{ scale: 0.96, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.96, opacity: 0 }}
+              className="glass-card relative flex h-[85vh] w-full max-w-4xl flex-col overflow-hidden border-white/15 p-0"
+            >
+              <div className="flex items-center justify-between border-b border-white/10 px-6 py-4">
+                <h3 id="gallery-selector-title" className="text-lg font-display font-black uppercase tracking-widest text-white">
+                  Choose from Gallery
+                </h3>
+                <button
+                  type="button"
+                  onClick={() => setIsGallerySelectorOpen(false)}
+                  aria-label="Close gallery selector"
+                  className="flex h-9 w-9 items-center justify-center rounded-full border border-white/10 bg-white/5 text-gray-300 hover:text-white"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+
+              <div className="border-b border-white/10 px-6 py-4">
+                <div className="relative">
+                  <Search size={14} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-500" />
+                  <label htmlFor="gallery-selector-search" className="sr-only">
+                    Search gallery designs
+                  </label>
+                  <input
+                    id="gallery-selector-search"
+                    type="search"
+                    value={gallerySearchInput}
+                    onChange={(event) => setGallerySearchInput(event.target.value)}
+                    placeholder="Search designs..."
+                    className="w-full rounded-xl border border-white/10 bg-white/5 py-2.5 pl-9 pr-4 text-sm text-white placeholder:text-gray-500 outline-none focus:border-neon-pink/50"
+                  />
+                </div>
+              </div>
+
+              <div className="flex-1 overflow-y-auto px-6 py-5">
+                {galleryLoading ? (
+                  <div className="flex h-full items-center justify-center">
+                    <Loader2 size={24} className="animate-spin text-neon-pink" />
+                  </div>
+                ) : galleryError ? (
+                  <div className="flex h-full items-center justify-center text-sm text-neon-pink">{galleryError}</div>
+                ) : galleryArtworks.length === 0 ? (
+                  <div className="flex h-full flex-col items-center justify-center text-center text-gray-500">
+                    <ImageIcon size={28} className="mb-3" />
+                    <p className="text-xs font-bold uppercase tracking-widest">No designs found</p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4">
+                    {galleryArtworks.map((artwork) => (
+                      <button
+                        key={artwork.id}
+                        type="button"
+                        onClick={() => void handleGallerySelect(artwork)}
+                        className="group overflow-hidden rounded-2xl border border-white/10 bg-white/5 text-left transition-all hover:border-neon-pink/40"
+                      >
+                        <div className="aspect-square bg-cyber-black/60">
+                          <SmartImage
+                            src={artwork.thumbnailUrl || artwork.imageUrl}
+                            alt={artwork.title}
+                            className="w-full h-full"
+                            imgClassName="w-full h-full object-cover transition-transform group-hover:scale-105"
+                            loading="lazy"
+                          />
+                        </div>
+                        <p className="truncate px-3 py-2 text-[10px] font-bold uppercase tracking-widest text-gray-300">
+                          {artwork.title}
+                        </p>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {galleryTotalPages > 1 && (
+                <div className="flex items-center justify-center gap-3 border-t border-white/10 px-6 py-4">
+                  <button
+                    type="button"
+                    onClick={() => setGalleryPage((page) => Math.max(1, page - 1))}
+                    disabled={galleryPage <= 1}
+                    className="rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-[9px] font-bold uppercase tracking-widest text-gray-300 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    Previous
+                  </button>
+                  <span className="text-[9px] font-bold uppercase tracking-widest text-gray-500">
+                    Page {galleryPage} of {galleryTotalPages}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setGalleryPage((page) => Math.min(galleryTotalPages, page + 1))}
+                    disabled={galleryPage >= galleryTotalPages}
+                    className="rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-[9px] font-bold uppercase tracking-widest text-gray-300 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    Next
+                  </button>
+                </div>
+              )}
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Generate with AI panel (section 12) — embedded, never navigates away. Selecting the
+          generated result uploads it (as an ai_generated SourceDesignAsset) and applies it to
+          the active part, same as Gallery/Upload. */}
+      <AnimatePresence>
+        {isAiPanelOpen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[200] flex items-center justify-center bg-cyber-black/85 px-4 py-8 backdrop-blur-sm"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="ai-panel-title"
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') setIsAiPanelOpen(false);
+            }}
+          >
+            <motion.div
+              initial={{ scale: 0.96, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.96, opacity: 0 }}
+              className="glass-card relative w-full max-w-lg border-white/15 p-6"
+            >
+              <div className="mb-5 flex items-center justify-between">
+                <h3 id="ai-panel-title" className="text-lg font-display font-black uppercase tracking-widest text-white">
+                  Generate with AI
+                </h3>
+                <button
+                  type="button"
+                  onClick={() => setIsAiPanelOpen(false)}
+                  aria-label="Close AI generation panel"
+                  className="flex h-9 w-9 items-center justify-center rounded-full border border-white/10 bg-white/5 text-gray-300 hover:text-white"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+
+              <label htmlFor="ai-prompt" className="mb-2 block text-[9px] font-bold uppercase tracking-widest text-gray-400">
+                Prompt
+              </label>
+              <textarea
+                id="ai-prompt"
+                value={aiPrompt}
+                onChange={(event) => setAiPrompt(event.target.value)}
+                placeholder="Describe the design you want..."
+                rows={3}
+                className="mb-4 w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white placeholder:text-gray-500 outline-none focus:border-neon-purple/50"
+              />
+
+              <label htmlFor="ai-aspect-ratio" className="mb-2 block text-[9px] font-bold uppercase tracking-widest text-gray-400">
+                Aspect Ratio
+              </label>
+              <select
+                id="ai-aspect-ratio"
+                value={aiAspectRatio}
+                onChange={(event) => setAiAspectRatio(event.target.value as typeof aiAspectRatio)}
+                className="mb-5 w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none focus:border-neon-purple/50"
+              >
+                {AI_ASPECT_RATIO_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+
+              {aiError && (
+                <div className="mb-4 rounded-xl border border-neon-pink/25 bg-neon-pink/10 px-4 py-2.5 text-[10px] font-bold uppercase tracking-widest text-neon-pink">
+                  {aiError}
+                </div>
+              )}
+
+              {aiGeneratedImage && (
+                <div className="mb-5 overflow-hidden rounded-2xl border border-white/10">
+                  <img src={aiGeneratedImage} alt="AI generated design preview" className="w-full" />
+                </div>
+              )}
+
+              <div className="flex flex-wrap gap-3">
+                <button
+                  type="button"
+                  onClick={handleAiGenerate}
+                  disabled={aiGenerating || !aiPrompt.trim()}
+                  className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-neon-purple/40 bg-neon-purple/10 px-5 py-3 text-[10px] font-black uppercase tracking-widest text-white transition-all hover:bg-neon-purple/20 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {aiGenerating ? <Loader2 size={14} className="animate-spin" /> : <Wand2 size={14} />}
+                  {aiGenerating ? 'Generating...' : aiGeneratedImage ? 'Regenerate' : 'Generate'}
+                </button>
+                {aiGeneratedImage && (
+                  <button
+                    type="button"
+                    onClick={handleAiSelectGenerated}
+                    disabled={aiApplying}
+                    className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-white px-5 py-3 text-[10px] font-black uppercase tracking-widest text-cyber-black transition-all hover:bg-neon-purple hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {aiApplying ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
+                    {aiApplying ? 'Saving...' : 'Use This Design'}
+                  </button>
+                )}
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

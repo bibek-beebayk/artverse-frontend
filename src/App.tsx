@@ -127,6 +127,7 @@ function PageRoutes() {
           <Route path="/favorites" element={<Favorites />} />
           <Route path="/generator" element={<ProtectedDreamAccess component={Generator} />} />
           <Route path="/customize" element={<ProtectedDreamAccess component={Customization} />} />
+          <Route path="/customize/product/:productId" element={<ProtectedDreamAccess component={Customization} />} />
           <Route path="/saved-designs" element={<ProtectedDreamAccess component={SavedDesigns} />} />
           <Route path="/cart" element={<CartPage />} />
           <Route path="/collections/:collectionId" element={<CollectionDetail />} />

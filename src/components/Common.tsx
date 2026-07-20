@@ -194,7 +194,12 @@ export function ImageModal({ isOpen, onClose, imageUrl, title, onNext, onPrev, a
                           onClick={(e) => {
                             e.stopPropagation();
                             onClose();
-                            navigate('/shop', { state: { selectedDesignId: artworkId, selectedTemplateId: t.id }});
+                            // Shop.tsx is now a plain product catalogue (no template/design
+                            // pre-selection state) — the customization flow starts from picking
+                            // a real Product there, not a bare template here. See the
+                            // Shop-to-Customization redesign; template_id/artworkId are no
+                            // longer usable as a customize-screen entry point.
+                            navigate('/shop');
                           }}
                           className="glass-card p-4 flex flex-col items-center hover:border-neon-blue transition-all group border border-white/10"
                         >

@@ -1,5 +1,6 @@
 import type {
   Artwork,
+  ArtworkSearchParams,
   CartItem,
   CartTotals,
   CollectionSummary,
@@ -13,14 +14,41 @@ import type {
   MockupRender,
   MockupTemplate,
   MockupTemplatePart,
+  PaginatedArtworks,
+  PaginatedProducts,
   PlacementOverride,
   PrintFileBatchResult,
   PrintFileResult,
   Product,
+  ProductSearchParams,
   ProductVariant,
+  SourceDesignAsset,
   TextElement,
   VideoClip,
 } from "../types.ts";
+
+/** Envelope shape shared by every paginated list endpoint — see
+ * apps.shop.pagination.StandardResultsSetPagination on the backend. */
+interface BackendPaginatedResponse<T> {
+  count: number;
+  next: string | null;
+  previous: string | null;
+  page: number;
+  page_size: number;
+  total_pages: number;
+  results: T[];
+}
+
+function mapPaginationMeta<T>(response: BackendPaginatedResponse<T>) {
+  return {
+    count: response.count,
+    page: response.page,
+    pageSize: response.page_size,
+    totalPages: response.total_pages,
+    next: response.next,
+    previous: response.previous,
+  };
+}
 
 interface BackendCategory {
   id: number;
@@ -76,6 +104,30 @@ interface BackendProduct {
   variants: BackendProductVariant[];
   available_sizes: string[];
   available_colors: string[];
+}
+
+interface BackendSourceDesignAsset {
+  id: number;
+  source_type: "user_upload" | "ai_generated" | "gallery";
+  file_url: string | null;
+  thumbnail_url: string | null;
+  width: number | null;
+  height: number | null;
+  has_transparency: boolean;
+  created_at: string;
+}
+
+function mapSourceDesignAsset(asset: BackendSourceDesignAsset): SourceDesignAsset {
+  return {
+    id: asset.id,
+    sourceType: asset.source_type,
+    fileUrl: resolveAssetUrl(asset.file_url) || null,
+    thumbnailUrl: resolveAssetUrl(asset.thumbnail_url) || null,
+    width: asset.width,
+    height: asset.height,
+    hasTransparency: asset.has_transparency,
+    createdAt: asset.created_at,
+  };
 }
 
 interface BackendMockupTemplatePart {
@@ -321,7 +373,10 @@ async function refreshBackendAccessToken() {
 
 async function requestJson<T>(path: string, init?: RequestInit, retryOn401 = true): Promise<T> {
   const headers = new Headers(init?.headers);
-  if (!headers.has("Content-Type") && init?.body) {
+  // A FormData body (file uploads) must NOT get a manually-set Content-Type — fetch/the browser
+  // sets `multipart/form-data; boundary=...` automatically, and a boundary-less
+  // `application/json` override here would make the server unable to parse the multipart body.
+  if (!headers.has("Content-Type") && init?.body && !(init.body instanceof FormData)) {
     headers.set("Content-Type", "application/json");
   }
 
@@ -345,7 +400,7 @@ async function requestJson<T>(path: string, init?: RequestInit, retryOn401 = tru
     const nextAccessToken = await refreshBackendAccessToken();
     if (nextAccessToken) {
       const retryHeaders = new Headers(init?.headers);
-      if (!retryHeaders.has("Content-Type") && init?.body) {
+      if (!retryHeaders.has("Content-Type") && init?.body && !(init.body instanceof FormData)) {
         retryHeaders.set("Content-Type", "application/json");
       }
       retryHeaders.set("Authorization", `Bearer ${nextAccessToken}`);
@@ -613,17 +668,40 @@ export async function getCollections() {
   return collections.map(mapCollection);
 }
 
+// /gallery/artworks/ and /shop/products/ are paginated (see BackendPaginatedResponse) — these
+// two simple helpers request a large page_size and flatten `.results`, for the many existing
+// callers (Home.tsx, Favorites.tsx, CollectionDetail.tsx, Generator.tsx, etc.) that just want
+// "give me everything," not a specific page. The Shop catalogue page and the customization
+// editor's gallery selector use getProductsPage()/getArtworksPage() (below) instead, for real
+// pagination.
 export async function getArtworks(options?: { collectionSlug?: string }) {
-  const search = options?.collectionSlug
-    ? `?collection=${encodeURIComponent(options.collectionSlug)}`
-    : "";
-  const artworks = await fetchJson<BackendArtwork[]>(`/gallery/artworks/${search}`);
-  return artworks.map(mapArtwork);
+  const params = new URLSearchParams({ page_size: "100" });
+  if (options?.collectionSlug) params.set("collection", options.collectionSlug);
+  const response = await fetchJson<BackendPaginatedResponse<BackendArtwork>>(`/gallery/artworks/?${params.toString()}`);
+  return response.results.map(mapArtwork);
 }
 
 export async function getFeaturedArtworks() {
-  const artworks = await fetchJson<BackendArtwork[]>("/gallery/artworks/?featured=true");
-  return artworks.map(mapArtwork);
+  const response = await fetchJson<BackendPaginatedResponse<BackendArtwork>>(
+    "/gallery/artworks/?featured=true&page_size=100"
+  );
+  return response.results.map(mapArtwork);
+}
+
+/** Paginated gallery listing for the customization editor's "Choose from Gallery" selector —
+ * never fetches the whole catalogue at once. */
+export async function getArtworksPage(params: ArtworkSearchParams = {}): Promise<PaginatedArtworks> {
+  const search = new URLSearchParams();
+  if (params.page) search.set("page", String(params.page));
+  if (params.pageSize) search.set("page_size", String(params.pageSize));
+  if (params.search) search.set("search", params.search);
+  if (params.category) search.set("category", params.category);
+  if (params.ordering) search.set("ordering", params.ordering);
+  const query = search.toString();
+  const response = await fetchJson<BackendPaginatedResponse<BackendArtwork>>(
+    `/gallery/artworks/${query ? `?${query}` : ""}`
+  );
+  return { ...mapPaginationMeta(response), results: response.results.map(mapArtwork) };
 }
 
 export async function getFavorites() {
@@ -652,9 +730,56 @@ export async function getProductCategories() {
   return ["All", ...categories.map((category) => category.name)];
 }
 
+/** Full category objects (id/name/slug) — the Shop catalogue's category filter needs the slug
+ * (what `?category=` on the product list actually filters by; `getProductCategories()` above
+ * discards it and returns display names only, fine for its own callers but not usable here). */
+export async function getShopCategories(): Promise<CollectionSummary[]> {
+  const categories = await fetchJson<BackendCategory[]>("/shop/categories/");
+  return categories.map((category) => ({ id: String(category.id), name: category.name, slug: category.slug }));
+}
+
 export async function getProducts() {
-  const products = await fetchJson<BackendProduct[]>("/shop/products/");
-  return products.map(mapProduct);
+  const response = await fetchJson<BackendPaginatedResponse<BackendProduct>>("/shop/products/?page_size=100");
+  return response.results.map(mapProduct);
+}
+
+/** Paginated, searchable/filterable/sortable product catalogue — used by the Shop page. */
+export async function getProductsPage(params: ProductSearchParams = {}): Promise<PaginatedProducts> {
+  const search = new URLSearchParams();
+  if (params.page) search.set("page", String(params.page));
+  if (params.pageSize) search.set("page_size", String(params.pageSize));
+  if (params.search) search.set("search", params.search);
+  if (params.category) search.set("category", params.category);
+  if (params.productType) search.set("product_type", params.productType);
+  if (params.ordering) search.set("ordering", params.ordering);
+  const query = search.toString();
+  const response = await fetchJson<BackendPaginatedResponse<BackendProduct>>(
+    `/shop/products/${query ? `?${query}` : ""}`
+  );
+  return { ...mapPaginationMeta(response), results: response.results.map(mapProduct) };
+}
+
+/** POST /api/generator/design-assets/upload/ — the shared entry point for a device file upload
+ * ("Upload Design") and persisting a client-generated AI image ("Generate with AI") as a
+ * private SourceDesignAsset. `file` may be any browser File/Blob (a canvas-generated AI result
+ * is converted to a File by the caller first — see lib/aiGeneration.ts). */
+export async function uploadDesignAsset(
+  file: File | Blob,
+  sourceType: "user_upload" | "ai_generated" = "user_upload",
+  title?: string
+): Promise<SourceDesignAsset> {
+  const formData = new FormData();
+  formData.append("file", file, file instanceof File ? file.name : "upload.png");
+  formData.append("source_type", sourceType);
+  if (title) {
+    formData.append("title", title);
+  }
+
+  const response = await requestJson<BackendSourceDesignAsset>("/generator/design-assets/upload/", {
+    method: "POST",
+    body: formData,
+  });
+  return mapSourceDesignAsset(response);
 }
 
 export async function getMockupTemplates(productType?: string) {
@@ -766,6 +891,7 @@ interface BackendDesignPlacement {
   template_part_id: number | null;
   source_artwork_id: number | null;
   source_generated_image_id: number | null;
+  source_asset_id: number | null;
   source_image_url: string;
   source_prompt: string;
   placement_override: {
@@ -845,6 +971,7 @@ function mapDesignPlacement(placement: BackendDesignPlacement): DesignPlacement 
     templatePartId: placement.template_part_id,
     sourceArtworkId: placement.source_artwork_id,
     sourceGeneratedImageId: placement.source_generated_image_id,
+    sourceAssetId: placement.source_asset_id,
     sourceImageUrl: placement.source_image_url,
     sourcePrompt: placement.source_prompt,
     placementOverride: {
@@ -944,6 +1071,7 @@ function mapPlacementToBackendPayload(placement: DesignPlacement) {
     part_name: placement.partName,
     source_artwork_id: placement.sourceArtworkId ?? null,
     source_generated_image_id: placement.sourceGeneratedImageId ?? null,
+    source_asset_id: placement.sourceAssetId ?? null,
     source_image_url: placement.sourceImageUrl ?? "",
     source_prompt: placement.sourcePrompt ?? "",
     placement_override: {

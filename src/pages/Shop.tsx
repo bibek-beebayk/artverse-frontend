@@ -1,978 +1,383 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
-import { CheckCircle2, ChevronLeft, ChevronRight, Package2, Palette, RefreshCw, ShoppingBag, Sparkles } from 'lucide-react';
-import type { ActiveCustomization, Artwork, MockupRender, MockupTemplate, PlacementOverride, Product } from '../types.ts';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { Loader2, Package2, Search, ShoppingBag, SlidersHorizontal } from 'lucide-react';
+import type { CollectionSummary, Product } from '../types.ts';
 import { SmartImage } from '../components/Common.tsx';
-import { createMockupRender, getArtworks, getMockupTemplates, getProducts } from '../lib/api.ts';
-import { useCart } from '../context/CartContext.tsx';
-import { cn } from '../lib/utils.ts';
+import { getProductsPage, getShopCategories } from '../lib/api.ts';
 import { formatStartingPrice } from '../lib/pricing.ts';
-import { describeSellableSelectionReason, validateSellableSelection } from '../lib/sellableSelection.ts';
+import { cn } from '../lib/utils.ts';
 
-interface ShopSample {
-  key: string;
-  variantColor: string;
-  variantSize: string;
-  placementLabel: string;
-  render: MockupRender;
-}
+const PAGE_SIZE = 24;
+const SEARCH_DEBOUNCE_MS = 400;
 
-interface SampleVariant {
-  key: string;
-  variantColor: string;
-  variantSize: string;
-  placementLabel: string;
-  placementOverride?: PlacementOverride;
-}
+const ORDERING_OPTIONS: { value: string; label: string }[] = [
+  { value: '', label: 'Newest' },
+  { value: 'starting_price', label: 'Price: Low to High' },
+  { value: '-starting_price', label: 'Price: High to Low' },
+  { value: 'name', label: 'Name: A to Z' },
+  { value: '-name', label: 'Name: Z to A' },
+];
 
-// Deliberately no price here — this map exists purely to give the template-only preview flow
-// (choosing a prop/design with no purchasable Product resolved yet) plausible sizes/colours to
-// render a sample mockup with. See lib/sellableSelection.ts / lib/pricing.ts for how an actual
-// selling price is derived once a real, sellable Product+ProductVariant is resolved — never from
-// this table, and never as a fallback when that resolution fails.
-const TEMPLATE_META: Record<
-  string,
-  {
-    fallbackSizes: string[];
-    fallbackColours: string[];
-  }
-> = {
-  tshirt: {
-    fallbackSizes: ['S', 'M', 'L', 'XL'],
-    fallbackColours: ['Black', 'White', 'Grey'],
-  },
-  hoodie: {
-    fallbackSizes: ['S', 'M', 'L', 'XL'],
-    fallbackColours: ['Black', 'White', 'Grey'],
-  },
-  mug: {
-    fallbackSizes: ['11oz', '15oz'],
-    fallbackColours: ['Classic Pearl', 'Black Rim'],
-  },
-  canvas: {
-    fallbackSizes: ['12" x 12"', '18" x 18"'],
-    fallbackColours: ['Gallery Wrap'],
-  },
-  poster: {
-    fallbackSizes: ['12" x 18"', '18" x 24"'],
-    fallbackColours: ['Matte'],
-  },
-};
-
-function getTemplateMeta(template: MockupTemplate) {
-  return (
-    TEMPLATE_META[template.productType] || {
-      fallbackSizes: ['Standard'],
-      fallbackColours: ['Default'],
-    }
-  );
-}
-
-function getPlacementFromCandidate(candidate: unknown): PlacementOverride | null {
-  if (!candidate || typeof candidate !== 'object') {
-    return null;
-  }
-
-  const placement = candidate as Record<string, unknown>;
-  const x = Number(placement.x);
-  const y = Number(placement.y);
-  const width = Number(placement.width);
-  const height = Number(placement.height);
-
-  if ([x, y, width, height].some((value) => Number.isNaN(value))) {
-    return null;
-  }
-
-  const normalized: PlacementOverride = { x, y, width, height };
-  const cornerRadius = Number(placement.corner_radius ?? placement.cornerRadius);
-  if (!Number.isNaN(cornerRadius)) {
-    normalized.cornerRadius = cornerRadius;
-  }
-  if (typeof placement.fit === 'string') {
-    normalized.fit = placement.fit;
-  }
-  const rotation = Number(placement.rotation);
-  if (!Number.isNaN(rotation)) {
-    normalized.rotation = rotation;
-  }
-  const opacity = Number(placement.opacity);
-  if (!Number.isNaN(opacity)) {
-    normalized.opacity = opacity;
-  }
-
-  return normalized;
-}
-
-function buildPlacementPresets(template: MockupTemplate): Array<{
-  label: string;
-  placementOverride?: PlacementOverride;
-}> {
-  const configuredPlacements = Array.isArray((template.config as Record<string, unknown>)?.sample_placements)
-    ? ((template.config as Record<string, unknown>).sample_placements as unknown[])
-        .map((item) => {
-          if (!item || typeof item !== 'object') {
-            return null;
-          }
-
-          const record = item as Record<string, unknown>;
-          const placement = getPlacementFromCandidate(record.placement);
-          if (!placement) {
-            return null;
-          }
-
-          return {
-            label: typeof record.label === 'string' && record.label.trim() ? record.label.trim() : 'Custom Placement',
-            placementOverride: placement,
-          };
-        })
-        .filter((item): item is { label: string; placementOverride: PlacementOverride } => item !== null)
-    : [];
-
-  if (configuredPlacements.length > 0) {
-    return configuredPlacements.slice(0, 4);
-  }
-
-  const basePlacement = getPlacementFromCandidate((template.config as Record<string, unknown>)?.placement);
-  if (!basePlacement) {
-    return [{ label: 'Default Placement' }];
-  }
-
-  const { x, y, width, height, cornerRadius } = basePlacement;
-  const preset = (label: string, next: Partial<PlacementOverride>) => ({
-    label,
-    placementOverride: {
-      x: next.x ?? x,
-      y: next.y ?? y,
-      width: next.width ?? width,
-      height: next.height ?? height,
-      cornerRadius: next.cornerRadius ?? cornerRadius,
-      fit: next.fit ?? basePlacement.fit ?? 'cover',
-      rotation: next.rotation ?? basePlacement.rotation,
-      opacity: next.opacity ?? basePlacement.opacity,
-    },
-  });
-
-  if (template.productType === 'tshirt' || template.productType === 'hoodie') {
-    return [
-      preset('Centered', {}),
-      preset('Oversized Front', {
-        x: x - Math.round(width * 0.08),
-        y: y + Math.round(height * 0.08),
-        width: Math.round(width * 1.18),
-        height: Math.round(height * 1.18),
-      }),
-      preset('Left Chest', {
-        x: x - Math.round(width * 0.34),
-        y: y - Math.round(height * 0.08),
-        width: Math.round(width * 0.45),
-        height: Math.round(height * 0.45),
-      }),
-      preset('Lower Print', {
-        y: y + Math.round(height * 0.22),
-        width: Math.round(width * 0.9),
-        height: Math.round(height * 0.9),
-      }),
-    ];
-  }
-
-  if (template.productType === 'mug') {
-    return [
-      preset('Centered Wrap', {}),
-      preset('Left Wrap', {
-        x: x - Math.round(width * 0.18),
-        width: Math.round(width * 0.82),
-      }),
-      preset('Right Wrap', {
-        x: x + Math.round(width * 0.18),
-        width: Math.round(width * 0.82),
-      }),
-      preset('Panoramic Wrap', {
-        x: x - Math.round(width * 0.12),
-        width: Math.round(width * 1.12),
-      }),
-    ];
-  }
-
-  return [
-    preset('Centered', {}),
-    preset('Expanded', {
-      x: x - Math.round(width * 0.08),
-      y: y - Math.round(height * 0.08),
-      width: Math.round(width * 1.14),
-      height: Math.round(height * 1.14),
-    }),
-    preset('Inset', {
-      x: x + Math.round(width * 0.08),
-      y: y + Math.round(height * 0.08),
-      width: Math.round(width * 0.84),
-      height: Math.round(height * 0.84),
-    }),
-  ];
-}
-
-function getSampleVariants(template: MockupTemplate): SampleVariant[] {
-  const meta = getTemplateMeta(template);
-  const colours =
-    template.supportedColors.length > 0 ? template.supportedColors : meta.fallbackColours;
-  const sizes = template.supportedSizes.length > 0 ? template.supportedSizes : meta.fallbackSizes;
-  const primarySize = sizes[0] || 'Standard';
-  const placements = buildPlacementPresets(template);
-  const primaryColour = colours[0] || 'Default';
-
-  return placements.map((placement, index) => ({
-    key: `${template.id}-${primaryColour}-${primarySize}-${placement.label}-${index}`,
-    variantColor: primaryColour,
-    variantSize: primarySize,
-    placementLabel: placement.label,
-    placementOverride: placement.placementOverride
-      ? {
-          ...placement.placementOverride,
-          fit: placement.placementOverride.fit ?? 'cover',
-        }
-      : undefined,
-  }));
+/** Reads a param straight from the URL for initial state — the Shop catalogue's whole filter
+ * state lives in the URL (search/category/ordering/page), so refreshing or sharing a link
+ * preserves it. See section 4/24 of the Shop-catalogue redesign. */
+function readParam(searchParams: URLSearchParams, key: string): string {
+  return searchParams.get(key) ?? '';
 }
 
 export function Shop() {
   const navigate = useNavigate();
-  const location = useLocation();
-  const { addToCart, setActiveCustomization } = useCart();
-  const templateRailRef = useRef<HTMLDivElement | null>(null);
-  const designRailRef = useRef<HTMLDivElement | null>(null);
-  const [templates, setTemplates] = useState<MockupTemplate[]>([]);
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  const urlSearch = readParam(searchParams, 'search');
+  const urlCategory = readParam(searchParams, 'category');
+  const urlOrdering = readParam(searchParams, 'ordering');
+  const urlPage = Number(readParam(searchParams, 'page')) || 1;
+
+  // Search has its own local, immediately-responsive state — typing shouldn't refetch or touch
+  // browser history on every keystroke. It's debounced into the URL (and thus into the actual
+  // fetch) below.
+  const [searchInput, setSearchInput] = useState(urlSearch);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const [categories, setCategories] = useState<CollectionSummary[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
-  const [designs, setDesigns] = useState<Artwork[]>([]);
+  const [count, setCount] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [selectedTemplateId, setSelectedTemplateId] = useState<number | null>(
-    (location.state as { selectedTemplateId?: number })?.selectedTemplateId || null
-  );
-  const [selectedDesignId, setSelectedDesignId] = useState<string | null>(
-    (location.state as { selectedDesignId?: string })?.selectedDesignId || null
-  );
-  const [activeDesignCategory, setActiveDesignCategory] = useState('All');
-  const [isGeneratingSamples, setIsGeneratingSamples] = useState(false);
-  const [samplesError, setSamplesError] = useState<string | null>(null);
-  const [samples, setSamples] = useState<ShopSample[]>([]);
-  const [addedSampleKey, setAddedSampleKey] = useState<string | null>(null);
 
   useEffect(() => {
-    const loadShopBuilder = async () => {
-      try {
-        const [loadedTemplates, loadedDesigns, loadedProducts] = await Promise.all([
-          getMockupTemplates(),
-          getArtworks(),
-          getProducts().catch((productsError) => {
-            // Storefront products are supplementary here (only used to attach a real
-            // productId to the customization) — don't fail the whole builder if this call
-            // has an issue, the template-only flow still works.
-            console.error('Failed to load storefront products:', productsError);
-            return [];
-          }),
-        ]);
-
-        setTemplates(loadedTemplates);
-        setDesigns(loadedDesigns);
-        setProducts(loadedProducts);
-      } catch (loadError) {
-        console.error('Failed to load shop builder data:', loadError);
-        setError('The merch builder is currently unavailable.');
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    void loadShopBuilder();
+    getShopCategories()
+      .then(setCategories)
+      .catch((categoriesError) => console.error('Failed to load shop categories:', categoriesError));
   }, []);
 
-  const selectedTemplate =
-    templates.find((template) => template.id === selectedTemplateId) ?? null;
-  const selectedDesign = designs.find((design) => design.id === selectedDesignId) ?? null;
-  // The storefront product wrapping the selected template, if one exists — carries the real
-  // product_id into the customization instead of inferring it solely from the template.
-  const selectedProduct =
-    products.find((product) => product.mockupTemplateId === selectedTemplate?.id) ?? null;
-  // The variant the sample flow will actually purchase (Shop.tsx works off a single implicit
-  // "primary" colour/size, not a full picker) — the first sellable one, or null if the resolved
-  // product has none. See getSampleVariants below, which reuses this same primary colour/size for
-  // every generated sample so the picked variant and the rendered previews stay consistent.
-  const defaultSellableVariant =
-    selectedProduct?.variants?.find((variant) => variant.isAvailable && variant.isSellable) ?? null;
-  // The one guard for every purchasable action below (Add To Cart, Specs Setup, the price badge)
-  // — a template selected with no matching sellable Product+ProductVariant never becomes
-  // purchasable, it stays preview-only. See lib/sellableSelection.ts.
-  const sellableSelection = validateSellableSelection(selectedProduct, defaultSellableVariant);
-
   useEffect(() => {
-    if (!selectedTemplate || !selectedDesign) {
-      setSamples([]);
-      setSamplesError(null);
-      return;
-    }
-
     let isCancelled = false;
+    setLoading(true);
+    setError(null);
 
-    const generateSamples = async () => {
-      setIsGeneratingSamples(true);
-      setSamplesError(null);
-      setSamples([]);
-
-      const sampleVariants = getSampleVariants(selectedTemplate);
-      const nextSamples: ShopSample[] = [];
-      let failedSamples = 0;
-
-      for (const variant of sampleVariants) {
-        try {
-          const response = await createMockupRender({
-            artworkId: selectedDesign.backendArtworkId,
-            sourceImageUrl: selectedDesign.imageUrl,
-            sourcePrompt: selectedDesign.title,
-            templateId: selectedTemplate.id,
-            variantColor: variant.variantColor,
-            variantSize: variant.variantSize,
-            placementOverride: variant.placementOverride,
-          });
-
-          nextSamples.push({
-            key: variant.key,
-            variantColor: variant.variantColor,
-            variantSize: variant.variantSize,
-            placementLabel: variant.placementLabel,
-            render: response.render,
-          });
-        } catch (sampleError) {
-          failedSamples += 1;
-          console.error(`Failed to generate shop sample for ${variant.placementLabel}:`, sampleError);
-        }
-      }
-
-      if (isCancelled) {
-        return;
-      }
-
-      setSamples(nextSamples);
-      if (nextSamples.length === 0) {
-        setSamplesError('No merch samples could be generated for this prop and design.');
-      } else if (failedSamples > 0) {
-        setSamplesError(
-          `Loaded ${nextSamples.length} of ${sampleVariants.length} configured samples. Check the missing sample placements in the template config.`
-        );
-      }
-      setIsGeneratingSamples(false);
-    };
-
-    void generateSamples();
+    getProductsPage({
+      page: urlPage,
+      pageSize: PAGE_SIZE,
+      search: urlSearch || undefined,
+      category: urlCategory || undefined,
+      ordering: urlOrdering || undefined,
+    })
+      .then((response) => {
+        if (isCancelled) return;
+        setProducts(response.results);
+        setCount(response.count);
+        setTotalPages(response.totalPages);
+      })
+      .catch((loadError) => {
+        if (isCancelled) return;
+        console.error('Failed to load products:', loadError);
+        setError('The shop is currently unavailable. Please try again shortly.');
+        setProducts([]);
+      })
+      .finally(() => {
+        if (!isCancelled) setLoading(false);
+      });
 
     return () => {
       isCancelled = true;
     };
-  }, [selectedDesign, selectedTemplate]);
+  }, [urlPage, urlSearch, urlCategory, urlOrdering]);
 
-  const selectedStep = useMemo(() => {
-    if (!selectedTemplate) {
-      return 1;
-    }
-    if (!selectedDesign) {
-      return 2;
-    }
-    return 3;
-  }, [selectedDesign, selectedTemplate]);
-
-  const designCategories = useMemo(() => {
-    return ['All', ...Array.from(new Set(designs.map((design) => design.category)))];
-  }, [designs]);
-
-  const filteredDesigns = useMemo(() => {
-    if (activeDesignCategory === 'All') {
-      return designs;
-    }
-
-    return designs.filter((design) => design.category === activeDesignCategory);
-  }, [activeDesignCategory, designs]);
-
-  const designRailItems = useMemo(() => {
-    if (filteredDesigns.length === 0) {
-      return [];
-    }
-
-    return [...filteredDesigns, ...filteredDesigns, ...filteredDesigns];
-  }, [filteredDesigns]);
-
+  // Debounce: local typing -> URL update (which triggers the fetch above) 400ms after the user
+  // stops typing, and resets to page 1 (a new search shouldn't stay on page 4 of the old results).
   useEffect(() => {
-    if (!selectedTemplate || filteredDesigns.length === 0 || !designRailRef.current) {
-      return;
+    if (debounceRef.current) {
+      clearTimeout(debounceRef.current);
     }
+    debounceRef.current = setTimeout(() => {
+      setSearchParams(
+        (previous) => {
+          const next = new URLSearchParams(previous);
+          if (searchInput) {
+            next.set('search', searchInput);
+          } else {
+            next.delete('search');
+          }
+          next.delete('page');
+          return next;
+        },
+        { replace: true }
+      );
+    }, SEARCH_DEBOUNCE_MS);
 
-    const rail = designRailRef.current;
-    const singleSetWidth = rail.scrollWidth / 3;
-    rail.scrollLeft = singleSetWidth;
-  }, [filteredDesigns.length, selectedTemplate]);
-
-  const handleDesignRailScroll = () => {
-    const rail = designRailRef.current;
-    if (!rail || filteredDesigns.length === 0) {
-      return;
-    }
-
-    const singleSetWidth = rail.scrollWidth / 3;
-    if (rail.scrollLeft <= singleSetWidth * 0.25) {
-      rail.scrollLeft += singleSetWidth;
-    } else if (rail.scrollLeft >= singleSetWidth * 1.75) {
-      rail.scrollLeft -= singleSetWidth;
-    }
-  };
-
-  const handleHorizontalWheel = (
-    event: React.WheelEvent<HTMLDivElement>,
-    rail: HTMLDivElement | null
-  ) => {
-    if (!rail) {
-      return;
-    }
-
-    const nextDelta =
-      Math.abs(event.deltaY) > Math.abs(event.deltaX) ? event.deltaY : event.deltaX;
-
-    if (nextDelta === 0) {
-      return;
-    }
-
-    event.preventDefault();
-    rail.scrollBy({ left: nextDelta, behavior: 'auto' });
-  };
-
-  const scrollRailByPage = (rail: HTMLDivElement | null, direction: 'prev' | 'next') => {
-    if (!rail) {
-      return;
-    }
-
-    const delta = Math.max(rail.clientWidth * 0.8, 240) * (direction === 'next' ? 1 : -1);
-    rail.scrollBy({ left: delta, behavior: 'smooth' });
-  };
-
-  const handleAddSampleToCart = (sample: ShopSample) => {
-    if (!selectedTemplate || !selectedDesign) {
-      return;
-    }
-    // A template with no resolved, sellable Product+ProductVariant is preview-only — it must
-    // never reach the cart. See lib/sellableSelection.ts.
-    if (!sellableSelection.selection) {
-      return;
-    }
-
-    const cartItemId = `shop-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-
-    addToCart({
-      id: cartItemId,
-      generatedArtworkId: selectedDesign.id,
-      sourceArtworkId: selectedDesign.backendArtworkId,
-      productType: selectedTemplate.productTypeDisplay,
-      mockupImageUrl:
-        sample.render.outputImage || sample.render.outputImageUrl || selectedTemplate.baseImage || '',
-      selectedSize: sample.variantSize,
-      selectedColour: sample.variantColor,
-      quantity: 1,
-      // A provisional guest-mode estimate from the validated sellable selection — never the
-      // template's config price.
-      price: sellableSelection.selection.startingPrice,
-      productId: Number(sellableSelection.selection.product.id),
-      variantId: sellableSelection.selection.variant.id,
-      templateId: selectedTemplate.id,
-      backendRenderId: sample.render.id,
-      placementOverride: sample.render.placementOverride ?? undefined,
-      cropOverride: sample.render.cropOverride ?? undefined,
-      userPrompt: selectedDesign.title,
-      originalImageUrl: selectedDesign.imageUrl,
-    });
-
-    setAddedSampleKey(sample.key);
-    window.setTimeout(() => {
-      setAddedSampleKey((current) => (current === sample.key ? null : current));
-    }, 1800);
-  };
-
-  const handleOpenSpecsSetup = () => {
-    if (!selectedTemplate || !selectedDesign) {
-      return;
-    }
-
-    const meta = getTemplateMeta(selectedTemplate);
-    // Prefer the storefront product's own variant-derived sizes/colours; fall back to the
-    // template's flat lists (and finally the hardcoded meta defaults) only when the product
-    // has no configured variants yet — see designProjectMapping / TODO.md item 9.
-    const productSizes = selectedProduct?.availableSizes?.filter((size) => size) ?? [];
-    const productColours = selectedProduct?.availableColors?.filter((colour) => colour) ?? [];
-    // Entering the customization editor itself stays allowed even without a resolved sellable
-    // product — it's a legitimate template-only preview/exploration flow (see
-    // lib/sellableSelection.ts's docs and section 2 of the product/variant refactor task).
-    // Customization.tsx independently disables its own Add-to-Cart CTA and shows a "preview
-    // only" state whenever it doesn't resolve a sellable selection, so no purchasable action can
-    // ever be reached from here even though navigation itself isn't blocked.
-    const customization: ActiveCustomization = {
-      artworkId: selectedDesign.id,
-      sourceArtworkId: selectedDesign.backendArtworkId,
-      userPrompt: selectedDesign.title,
-      imageUrl: selectedDesign.imageUrl,
-      templateId: selectedTemplate.id,
-      templateName: selectedTemplate.name,
-      productType: selectedTemplate.productTypeDisplay,
-      productId: selectedProduct ? Number(selectedProduct.id) : undefined,
-      mockupImageUrl: selectedTemplate.baseImage || selectedDesign.imageUrl,
-      templateBaseImageUrl: selectedTemplate.baseImage,
-      templateMaskImageUrl: selectedTemplate.maskImage,
-      templateShadowLayerUrl: selectedTemplate.shadowLayer,
-      templateHighlightLayerUrl: selectedTemplate.highlightLayer,
-      templateParts: selectedTemplate.parts,
-      startingPrice: sellableSelection.selection?.startingPrice ?? null,
-      sizes:
-        productSizes.length > 0
-          ? productSizes
-          : selectedTemplate.supportedSizes.length > 0
-            ? [...selectedTemplate.supportedSizes]
-            : [...meta.fallbackSizes],
-      colours:
-        productColours.length > 0
-          ? productColours
-          : selectedTemplate.supportedColors.length > 0
-            ? [...selectedTemplate.supportedColors]
-            : [...meta.fallbackColours],
-      basePlacement: (() => {
-        const basePlacement = getPlacementFromCandidate(
-          (selectedTemplate.config as Record<string, unknown>)?.placement
-        );
-        return basePlacement
-          ? {
-              ...basePlacement,
-              fit: basePlacement.fit ?? 'cover',
-            }
-          : null;
-      })(),
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchInput]);
 
-    setActiveCustomization(customization);
-    navigate('/customize', { state: { customization } });
+  const updateParam = (key: string, value: string) => {
+    setSearchParams((previous) => {
+      const next = new URLSearchParams(previous);
+      if (value) {
+        next.set(key, value);
+      } else {
+        next.delete(key);
+      }
+      next.delete('page');
+      return next;
+    });
   };
 
-  if (loading) {
-    return (
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-12">
-        <div className="glass-card border-white/10 p-8 text-center text-xs font-bold uppercase tracking-[0.3em] text-gray-500">
-          Loading merch builder
-        </div>
-      </div>
-    );
-  }
+  const goToPage = (page: number) => {
+    setSearchParams((previous) => {
+      const next = new URLSearchParams(previous);
+      if (page > 1) {
+        next.set('page', String(page));
+      } else {
+        next.delete('page');
+      }
+      return next;
+    });
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
 
-  if (error) {
-    return (
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-12">
-        <div className="glass-card border-white/10 p-8 text-center text-sm text-neon-pink">
-          {error}
-        </div>
-      </div>
-    );
-  }
+  const activeFilterChips = useMemo(() => {
+    const chips: { key: string; label: string }[] = [];
+    if (urlSearch) chips.push({ key: 'search', label: `Search: "${urlSearch}"` });
+    if (urlCategory) {
+      const category = categories.find((c) => c.slug === urlCategory);
+      chips.push({ key: 'category', label: `Category: ${category?.name ?? urlCategory}` });
+    }
+    if (urlOrdering) {
+      const ordering = ORDERING_OPTIONS.find((o) => o.value === urlOrdering);
+      if (ordering) chips.push({ key: 'ordering', label: `Sort: ${ordering.label}` });
+    }
+    return chips;
+  }, [urlSearch, urlCategory, urlOrdering, categories]);
+
+  const clearFilter = (key: string) => {
+    if (key === 'search') {
+      setSearchInput('');
+    }
+    updateParam(key, '');
+  };
+
+  const handleSelectProduct = (product: Product) => {
+    // Product selection behavior: the catalogue only ever returns active, sellable products
+    // (see apps.shop.views._PUBLIC_PRODUCTS on the backend) — no client-side re-check needed
+    // before navigating. No cart item, no saved design, and no design is chosen here; the
+    // customization screen resolves the product's own first sellable variant and opens blank.
+    navigate(`/customize/product/${product.id}`);
+  };
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 py-10 sm:py-12">
-      <header className="mb-12 sm:mb-16">
-        <h1 className="text-4xl sm:text-5xl md:text-7xl font-display font-black text-white uppercase tracking-tighter mb-4">
-          Merch <span className="text-neon-pink neon-text-glow">Builder</span>
+      <header className="mb-10">
+        <h1 className="text-4xl sm:text-5xl md:text-6xl font-display font-black text-white uppercase tracking-tighter mb-3">
+          Shop <span className="text-neon-pink neon-text-glow">Merch</span>
         </h1>
-        <p className="text-gray-500 uppercase tracking-[0.25em] sm:tracking-[0.3em] text-[10px] sm:text-xs font-bold">
-          Step 1: Pick a prop / Step 2: Pick a design / Step 3: Review live samples
+        <p className="text-gray-500 uppercase tracking-[0.25em] text-[10px] sm:text-xs font-bold">
+          Browse products, then customize with your own design
         </p>
       </header>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-10">
-        {[
-          { step: 1, label: 'Choose Prop', icon: Package2 },
-          { step: 2, label: 'Choose Design', icon: Palette },
-          { step: 3, label: 'Generated Samples', icon: Sparkles },
-        ].map(({ step, label, icon: Icon }) => (
-          <div
-            key={step}
-            className={cn(
-              'rounded-2xl border px-5 py-4 flex items-center gap-3 transition-all',
-              selectedStep === step
-                ? 'border-neon-pink/40 bg-neon-pink/10 text-white'
-                : 'border-white/10 bg-white/5 text-gray-400'
-            )}
-          >
-            <div
-              className={cn(
-                'flex h-10 w-10 items-center justify-center rounded-full border',
-                selectedStep === step ? 'border-neon-pink/40 text-neon-pink' : 'border-white/10'
-              )}
+      <div className="flex flex-col lg:flex-row gap-4 mb-8">
+        <div className="relative flex-1">
+          <Search
+            size={16}
+            className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-gray-500"
+          />
+          <label htmlFor="shop-search" className="sr-only">
+            Search products
+          </label>
+          <input
+            id="shop-search"
+            type="search"
+            value={searchInput}
+            onChange={(event) => setSearchInput(event.target.value)}
+            placeholder="Search products..."
+            className="w-full rounded-2xl border border-white/10 bg-white/5 py-3.5 pl-11 pr-4 text-sm text-white placeholder:text-gray-500 outline-none transition-all focus:border-neon-pink/50 focus:bg-white/10"
+          />
+        </div>
+
+        <div className="flex flex-wrap gap-3">
+          <div>
+            <label htmlFor="shop-category" className="sr-only">
+              Filter by category
+            </label>
+            <select
+              id="shop-category"
+              value={urlCategory}
+              onChange={(event) => updateParam('category', event.target.value)}
+              className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3.5 text-xs font-bold uppercase tracking-widest text-gray-300 outline-none transition-all focus:border-neon-pink/50"
             >
-              <Icon size={18} />
-            </div>
-            <div>
-              <p className="text-[10px] font-mono uppercase tracking-[0.3em]">Step {step}</p>
-              <p className="text-xs font-bold uppercase tracking-widest">{label}</p>
-            </div>
+              <option value="">All Categories</option>
+              {categories.map((category) => (
+                <option key={category.slug} value={category.slug}>
+                  {category.name}
+                </option>
+              ))}
+            </select>
           </div>
-        ))}
+
+          <div className="relative">
+            <SlidersHorizontal
+              size={14}
+              className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-500"
+            />
+            <label htmlFor="shop-ordering" className="sr-only">
+              Sort products
+            </label>
+            <select
+              id="shop-ordering"
+              value={urlOrdering}
+              onChange={(event) => updateParam('ordering', event.target.value)}
+              className="rounded-2xl border border-white/10 bg-white/5 py-3.5 pl-9 pr-4 text-xs font-bold uppercase tracking-widest text-gray-300 outline-none transition-all focus:border-neon-pink/50"
+            >
+              {ORDERING_OPTIONS.map((option) => (
+                <option key={option.value || 'default'} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
       </div>
 
-      <section className="mb-14">
-        <div className="flex items-end justify-between gap-4 mb-6">
-          <div>
-            <p className="text-neon-blue text-[10px] font-bold uppercase tracking-[0.35em] mb-2">
-              Step 1
-            </p>
-            <h2 className="text-2xl sm:text-3xl font-display font-black text-white uppercase tracking-widest">
-              Select A Prop
-            </h2>
-          </div>
-          {selectedTemplate && (
-            <span className="text-[10px] uppercase tracking-[0.3em] text-gray-500">
-              Selected: {selectedTemplate.productTypeDisplay}
-            </span>
-          )}
-        </div>
-
-        <div className="mb-4 flex justify-end gap-2">
-          <button
-            type="button"
-            onClick={() => scrollRailByPage(templateRailRef.current, 'prev')}
-            className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/10 bg-white/5 text-gray-300 transition-all hover:border-white/20 hover:text-white"
-            aria-label="Previous props"
-          >
-            <ChevronLeft size={16} />
-          </button>
-          <button
-            type="button"
-            onClick={() => scrollRailByPage(templateRailRef.current, 'next')}
-            className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/10 bg-white/5 text-gray-300 transition-all hover:border-white/20 hover:text-white"
-            aria-label="Next props"
-          >
-            <ChevronRight size={16} />
-          </button>
-        </div>
-
-        <div
-          ref={templateRailRef}
-          onWheel={(event) => handleHorizontalWheel(event, templateRailRef.current)}
-          className="-mx-2 overflow-x-auto pb-3 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-        >
-          <div className="flex w-max gap-4 sm:gap-6 px-2">
-            {templates.map((template) => (
-              <button
-                key={template.id}
-                type="button"
-                onClick={() => {
-                  setSelectedTemplateId(template.id);
-                  setSamples([]);
-                  setSamplesError(null);
-                  setAddedSampleKey(null);
-                }}
-                className={cn(
-                  'w-44 sm:w-52 lg:w-60 shrink-0 overflow-hidden rounded-3xl border text-left transition-all',
-                  selectedTemplateId === template.id
-                    ? 'border-neon-pink/40 bg-neon-pink/10'
-                    : 'border-white/10 bg-white/5 hover:border-white/25'
-                )}
-              >
-                <div className="aspect-square bg-cyber-black/60">
-                  <SmartImage
-                    src={template.baseImage || ''}
-                    alt={template.productTypeDisplay}
-                    className="w-full h-full"
-                    imgClassName="w-full h-full object-contain p-5"
-                    loading="lazy"
-                  />
-                </div>
-                <div className="p-4">
-                  <p className="text-xs font-bold uppercase tracking-widest text-white">
-                    {template.productTypeDisplay}
-                  </p>
-                  <p className="mt-1 text-[10px] uppercase tracking-[0.25em] text-gray-500 line-clamp-2">
-                    {template.description || 'Backend mockup template'}
-                  </p>
-                </div>
-              </button>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      <section className="mb-14">
-        <div className="flex items-end justify-between gap-4 mb-6">
-          <div>
-            <p className="text-neon-blue text-[10px] font-bold uppercase tracking-[0.35em] mb-2">
-              Step 2
-            </p>
-            <h2 className="text-2xl sm:text-3xl font-display font-black text-white uppercase tracking-widest">
-              Select A Design
-            </h2>
-          </div>
-          {selectedDesign && (
-            <span className="text-[10px] uppercase tracking-[0.3em] text-gray-500">
-              Selected: {selectedDesign.title}
-            </span>
-          )}
-        </div>
-
-        {!selectedTemplate ? (
-          <div className="glass-card border-white/10 p-6 text-center text-xs font-bold uppercase tracking-[0.3em] text-gray-500">
-            Pick a prop first to unlock design selection
-          </div>
-        ) : (
-          <div className="space-y-5">
-            <div className="flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => scrollRailByPage(designRailRef.current, 'prev')}
-                className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/10 bg-white/5 text-gray-300 transition-all hover:border-white/20 hover:text-white"
-                aria-label="Previous designs"
-              >
-                <ChevronLeft size={16} />
-              </button>
-              <button
-                type="button"
-                onClick={() => scrollRailByPage(designRailRef.current, 'next')}
-                className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/10 bg-white/5 text-gray-300 transition-all hover:border-white/20 hover:text-white"
-                aria-label="Next designs"
-              >
-                <ChevronRight size={16} />
-              </button>
-            </div>
-
-            <div className="-mx-2 overflow-x-auto pb-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-              <div className="flex w-max gap-3 px-2">
-                {designCategories.map((category) => (
-                  <button
-                    key={category}
-                    type="button"
-                    onClick={() => {
-                      setActiveDesignCategory(category);
-                      setAddedSampleKey(null);
-                      if (
-                        selectedDesignId &&
-                        category !== 'All' &&
-                        !designs.some(
-                          (design) => design.id === selectedDesignId && design.category === category
-                        )
-                      ) {
-                        setSelectedDesignId(null);
-                      }
-                    }}
-                    className={cn(
-                      'shrink-0 rounded-full border px-4 py-2 text-[10px] font-bold uppercase tracking-[0.28em] transition-all',
-                      activeDesignCategory === category
-                        ? 'border-neon-blue/40 bg-neon-blue/10 text-white'
-                        : 'border-white/10 bg-white/5 text-gray-500 hover:border-white/25 hover:text-white'
-                    )}
-                  >
-                    {category}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div
-              ref={designRailRef}
-              onScroll={handleDesignRailScroll}
-              onWheel={(event) => handleHorizontalWheel(event, designRailRef.current)}
-              className="-mx-2 overflow-x-auto pb-3 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+      {activeFilterChips.length > 0 && (
+        <div className="mb-8 flex flex-wrap items-center gap-2">
+          <span className="text-[9px] font-bold uppercase tracking-widest text-gray-500">Active filters:</span>
+          {activeFilterChips.map((chip) => (
+            <button
+              key={chip.key}
+              type="button"
+              onClick={() => clearFilter(chip.key)}
+              className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-[9px] font-bold uppercase tracking-widest text-gray-300 transition-all hover:border-neon-pink/40 hover:text-white"
             >
-              <div className="flex w-max gap-4 px-2">
-                {designRailItems.map((design, index) => (
-                  <button
-                    key={`${design.id}-${index}`}
-                    type="button"
-                    onClick={() => {
-                      setSelectedDesignId(design.id);
-                      setAddedSampleKey(null);
-                    }}
-                    className={cn(
-                      'w-56 shrink-0 overflow-hidden rounded-3xl border bg-white/5 text-left transition-all',
-                      selectedDesignId === design.id
-                        ? 'border-neon-blue/40 bg-neon-blue/10'
-                        : 'border-white/10 hover:border-white/25'
-                    )}
-                  >
-                    <div className="aspect-[4/3]">
-                      <SmartImage
-                        src={design.thumbnailUrl || design.imageUrl}
-                        alt={design.title}
-                        className="w-full h-full"
-                        imgClassName="w-full h-full object-cover"
-                        loading="lazy"
-                      />
-                    </div>
-                    <div className="p-4">
-                      <p className="text-xs font-bold uppercase tracking-widest text-white line-clamp-1">
-                        {design.title}
-                      </p>
-                      <p className="mt-1 text-[10px] uppercase tracking-[0.25em] text-gray-500 line-clamp-2">
-                        {design.category}
-                      </p>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
-      </section>
-
-      <section>
-        <div className="flex items-end justify-between gap-4 mb-6">
-          <div>
-            <p className="text-neon-blue text-[10px] font-bold uppercase tracking-[0.35em] mb-2">
-              Step 3
-            </p>
-            <h2 className="text-2xl sm:text-3xl font-display font-black text-white uppercase tracking-widest">
-              Available Samples
-            </h2>
-          </div>
-          {isGeneratingSamples ? (
-            <span className="inline-flex items-center gap-2 text-[10px] uppercase tracking-[0.3em] text-gray-500">
-              <RefreshCw size={14} className="animate-spin" />
-              Rendering Samples
-            </span>
-          ) : null}
+              {chip.label}
+              <span aria-hidden="true">&times;</span>
+              <span className="sr-only">Remove filter</span>
+            </button>
+          ))}
         </div>
+      )}
 
-        {!selectedTemplate || !selectedDesign ? (
-          <div className="glass-card border-white/10 p-6 text-center text-xs font-bold uppercase tracking-[0.3em] text-gray-500">
-            Select a prop and a design to generate merch samples automatically
-          </div>
-        ) : !isGeneratingSamples && samples.length === 0 && samplesError ? (
-          <div className="glass-card border-white/10 p-6 text-center text-sm text-neon-pink">
-            {samplesError}
-          </div>
-        ) : isGeneratingSamples ? (
-          <div className="glass-card border-white/10 p-10 text-center">
-            <div className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-full border border-neon-purple/25 bg-neon-purple/10 text-neon-purple">
-              <RefreshCw size={22} className="animate-spin" />
-            </div>
-            <p className="text-xs font-bold uppercase tracking-[0.35em] text-white">
-              Building mockup samples
-            </p>
-            <p className="mt-2 text-[10px] uppercase tracking-[0.28em] text-gray-500">
-              Applying your selected design to available prop variants
-            </p>
-          </div>
-        ) : (
-          <div className="space-y-6">
-            {samplesError ? (
-              <div className="rounded-3xl border border-amber-400/25 bg-amber-400/10 px-5 py-4 text-[10px] font-bold uppercase tracking-[0.28em] text-amber-100">
-                {samplesError}
-              </div>
-            ) : null}
+      {loading ? (
+        <div className="glass-card border-white/10 p-16 text-center">
+          <Loader2 size={28} className="mx-auto mb-4 animate-spin text-neon-pink" />
+          <p className="text-xs font-bold uppercase tracking-[0.3em] text-gray-500">Loading products</p>
+        </div>
+      ) : error ? (
+        <div className="glass-card border-white/10 p-16 text-center text-sm text-neon-pink">{error}</div>
+      ) : products.length === 0 ? (
+        <div className="glass-card border-white/10 p-16 text-center">
+          <Package2 size={32} className="mx-auto mb-4 text-gray-600" />
+          <p className="text-sm font-bold uppercase tracking-widest text-white mb-2">No products found</p>
+          <p className="text-xs text-gray-500 uppercase tracking-wider">
+            {activeFilterChips.length > 0
+              ? 'Try adjusting your search or filters.'
+              : 'Check back soon — new products are on the way.'}
+          </p>
+        </div>
+      ) : (
+        <>
+          <p className="mb-6 text-[10px] font-bold uppercase tracking-widest text-gray-500">
+            {count} product{count === 1 ? '' : 's'}
+          </p>
 
-            <div className="rounded-3xl border border-neon-blue/20 bg-neon-blue/10 p-5 sm:p-6">
-              <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-                <div>
-                  <p className="text-[10px] font-bold uppercase tracking-[0.35em] text-neon-blue">
-                    Separate Feature
-                  </p>
-                  <h3 className="mt-2 text-xl sm:text-2xl font-display font-black uppercase tracking-widest text-white">
-                    Open Specs Setup
-                  </h3>
-                  <p className="mt-2 text-[10px] uppercase tracking-[0.28em] text-gray-300">
-                    Customize this prop and design in a dedicated workspace. The backend samples below remain fixed presets.
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={handleOpenSpecsSetup}
-                  className="rounded-2xl border border-white/15 bg-white px-5 py-3 text-xs font-black uppercase tracking-[0.28em] text-cyber-black transition-all hover:bg-neon-blue hover:text-white"
-                >
-                  Specs Setup
-                </button>
-              </div>
-            </div>
-
-            {!sellableSelection.selection && (
-              <div className="rounded-2xl border border-white/10 bg-white/5 px-5 py-4 text-[10px] font-bold uppercase tracking-[0.28em] text-gray-400">
-                {describeSellableSelectionReason(sellableSelection.reason) === 'Currently unavailable'
-                  ? 'This prop isn’t linked to a purchasable product yet — samples below are preview only.'
-                  : `Samples below are preview only — ${describeSellableSelectionReason(sellableSelection.reason)?.toLowerCase() ?? 'not yet available for purchase'}.`}
-              </div>
-            )}
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-6">
-            {samples.map((sample) => {
-              const priceLabel = formatStartingPrice(
-                sellableSelection.selection ? String(sellableSelection.selection.startingPrice) : null
-              );
-              const imageUrl =
-                sample.render.outputImage ||
-                sample.render.outputImageUrl ||
-                sample.render.template.baseImage ||
-                selectedDesign.imageUrl;
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+            {products.map((product) => {
+              const priceLabel = formatStartingPrice(product.startingPrice);
+              const colourCount = product.availableColors?.length ?? 0;
+              const sizeCount = product.availableSizes?.length ?? 0;
 
               return (
                 <div
-                  key={sample.key}
-                  className="overflow-hidden rounded-3xl border border-white/10 bg-white/5 transition-all hover:border-neon-pink/35"
+                  key={product.id}
+                  className="group overflow-hidden rounded-3xl border border-white/10 bg-white/5 transition-all hover:border-neon-pink/35"
                 >
                   <div className="aspect-square bg-cyber-black/70">
                     <SmartImage
-                      src={imageUrl}
-                      alt={`${sample.render.template.productTypeDisplay} sample`}
+                      src={product.thumbnailUrl || product.imageUrl}
+                      alt={product.name}
                       className="w-full h-full"
-                      imgClassName="w-full h-full object-cover"
+                      imgClassName="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
                       loading="lazy"
                     />
                   </div>
 
                   <div className="p-5">
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <p className="text-xs font-bold uppercase tracking-widest text-white">
-                          {sample.render.template.productTypeDisplay}
-                        </p>
-                        <p className="mt-1 text-[10px] uppercase tracking-[0.25em] text-gray-500">
-                          {sample.variantColor} • {sample.variantSize}
-                        </p>
-                        <p className="mt-1 text-[10px] uppercase tracking-[0.25em] text-neon-blue">
-                          {sample.placementLabel}
-                        </p>
-                      </div>
+                    <p className="text-[9px] uppercase tracking-[0.25em] text-neon-blue mb-1">{product.category}</p>
+                    <h3 className="text-sm font-display font-black uppercase tracking-wide text-white line-clamp-2 mb-2">
+                      {product.name}
+                    </h3>
+
+                    <div className="mb-3 flex items-center justify-between gap-2">
                       <span className="text-lg font-display font-black text-white">
                         {priceLabel ?? 'Unavailable'}
                       </span>
+                      {!product.isAvailable && (
+                        <span className="rounded-full border border-amber-400/30 bg-amber-400/10 px-2 py-0.5 text-[8px] font-bold uppercase tracking-widest text-amber-200">
+                          Unavailable
+                        </span>
+                      )}
                     </div>
+
+                    {(colourCount > 0 || sizeCount > 0) && (
+                      <p className="mb-4 text-[9px] uppercase tracking-widest text-gray-500">
+                        {colourCount > 0 ? `${colourCount} colour${colourCount === 1 ? '' : 's'}` : null}
+                        {colourCount > 0 && sizeCount > 0 ? ' · ' : null}
+                        {sizeCount > 0 ? `${sizeCount} size${sizeCount === 1 ? '' : 's'}` : null}
+                      </p>
+                    )}
 
                     <button
                       type="button"
-                      onClick={() => handleAddSampleToCart(sample)}
-                      disabled={!sellableSelection.selection}
-                      title={sellableSelection.selection ? undefined : describeSellableSelectionReason(sellableSelection.reason) ?? undefined}
+                      onClick={() => handleSelectProduct(product)}
+                      disabled={!product.isAvailable}
                       className={cn(
-                        'mt-5 w-full rounded-2xl px-4 py-3 text-[11px] font-black uppercase tracking-[0.24em] transition-all',
-                        !sellableSelection.selection
-                          ? 'bg-white/5 text-gray-600 cursor-not-allowed opacity-50'
-                          : addedSampleKey === sample.key
-                            ? 'bg-[#10b981] text-white'
-                            : 'bg-white text-cyber-black hover:bg-neon-pink hover:text-white'
+                        'w-full flex items-center justify-center gap-2 rounded-2xl px-4 py-3 text-[10px] font-black uppercase tracking-[0.2em] transition-all',
+                        product.isAvailable
+                          ? 'bg-white text-cyber-black hover:bg-neon-pink hover:text-white'
+                          : 'cursor-not-allowed bg-white/5 text-gray-600'
                       )}
                     >
-                      {addedSampleKey === sample.key ? (
-                        <span className="inline-flex items-center gap-2">
-                          <CheckCircle2 size={16} />
-                          Added
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-2">
-                          <ShoppingBag size={16} />
-                          Add To Cart
-                        </span>
-                      )}
+                      <ShoppingBag size={14} />
+                      Customize
                     </button>
                   </div>
                 </div>
               );
             })}
           </div>
-          </div>
-        )}
-      </section>
+
+          {totalPages > 1 && (
+            <nav
+              className="mt-10 flex items-center justify-center gap-2"
+              aria-label="Product catalogue pagination"
+            >
+              <button
+                type="button"
+                onClick={() => goToPage(urlPage - 1)}
+                disabled={urlPage <= 1}
+                className="rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-[10px] font-bold uppercase tracking-widest text-gray-300 transition-all hover:border-white/25 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Previous
+              </button>
+              <span className="px-3 text-[10px] font-bold uppercase tracking-widest text-gray-500">
+                Page {urlPage} of {totalPages}
+              </span>
+              <button
+                type="button"
+                onClick={() => goToPage(urlPage + 1)}
+                disabled={urlPage >= totalPages}
+                className="rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-[10px] font-bold uppercase tracking-widest text-gray-300 transition-all hover:border-white/25 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Next
+              </button>
+            </nav>
+          )}
+        </>
+      )}
     </div>
   );
 }

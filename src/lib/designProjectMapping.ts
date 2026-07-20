@@ -18,6 +18,7 @@ export function mapPartCustomizationToPlacement(partName: string, part: PartCust
     partName,
     sourceArtworkId: part.sourceArtworkId ?? null,
     sourceGeneratedImageId: part.sourceGeneratedImageId ?? null,
+    sourceAssetId: part.sourceAssetId ?? null,
     sourceImageUrl: part.imageUrl && !part.imageUrl.startsWith('data:') ? part.imageUrl : '',
     sourcePrompt: part.userPrompt ?? '',
     placementOverride: part.placementOverride ?? DEFAULT_PLACEMENT,
@@ -38,6 +39,7 @@ export function mapPlacementToPartCustomization(placement: DesignPlacement): Par
   const part: PartCustomization = {
     sourceArtworkId: placement.sourceArtworkId ?? undefined,
     sourceGeneratedImageId: placement.sourceGeneratedImageId ?? undefined,
+    sourceAssetId: placement.sourceAssetId ?? undefined,
     imageUrl: placement.sourceImageUrl || undefined,
     userPrompt: placement.sourcePrompt || undefined,
     placementOverride: placement.placementOverride,
@@ -137,7 +139,11 @@ export function mapEditorStateToDesignProjectWriteInput(params: {
 export function isPartConfigured(part: PartCustomization | undefined): boolean {
   if (!part) return false;
   return Boolean(
-    part.sourceArtworkId || part.sourceGeneratedImageId || part.imageUrl || (part.textElements && part.textElements.length > 0),
+    part.sourceArtworkId ||
+      part.sourceGeneratedImageId ||
+      part.sourceAssetId ||
+      part.imageUrl ||
+      (part.textElements && part.textElements.length > 0),
   );
 }
 

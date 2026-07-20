@@ -72,6 +72,52 @@ export interface Product {
   availableColors?: string[];
 }
 
+/** Envelope shape returned by the paginated `/api/shop/products/` list — see
+ * apps.shop.pagination.StandardResultsSetPagination on the backend. Used by the Shop catalogue
+ * page; simple callers that just want "all sellable products" keep using `getProducts()`
+ * (unwraps this internally). */
+export interface PaginatedProducts {
+  count: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+  next: string | null;
+  previous: string | null;
+  results: Product[];
+}
+
+/** Query params accepted by the paginated product list — see the backend's whitelisted
+ * `ordering` values (name/-name/starting_price/-starting_price/created_at/-created_at) and
+ * `product_type` (MockupTemplate.ProductType). `search` matches product name or description. */
+export interface ProductSearchParams {
+  page?: number;
+  pageSize?: number;
+  search?: string;
+  category?: string;
+  productType?: string;
+  ordering?: string;
+}
+
+/** Envelope shape returned by the paginated `/api/gallery/artworks/` list, used by the
+ * customization editor's "Choose from Gallery" selector. Mirrors PaginatedProducts. */
+export interface PaginatedArtworks {
+  count: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+  next: string | null;
+  previous: string | null;
+  results: Artwork[];
+}
+
+export interface ArtworkSearchParams {
+  page?: number;
+  pageSize?: number;
+  search?: string;
+  category?: string;
+  ordering?: string;
+}
+
 export interface AvailableMockupProduct {
   templateId?: number;
   productType: string;
@@ -141,9 +187,28 @@ export interface TextElement {
  * `generate_print_file_image`). Either would need a real data-model change (a layer list with a
  * discriminated `type: 'image' | 'text'`, not a bolt-on field here) plus editor UI, undo/redo,
  * and production-signature updates to match — a project-level decision, not a drive-by addition. */
+/** Response shape from POST /api/generator/design-assets/upload/ — a private (owner-scoped),
+ * server-stored image behind a device upload ("Upload Design") or a persisted AI-generated
+ * result ("Generate with AI"). Distinct from `Artwork` (public, admin-owned gallery designs). */
+export interface SourceDesignAsset {
+  id: number;
+  sourceType: 'user_upload' | 'ai_generated' | 'gallery';
+  fileUrl: string | null;
+  thumbnailUrl: string | null;
+  width: number | null;
+  height: number | null;
+  hasTransparency: boolean;
+  createdAt: string;
+}
+
 export interface PartCustomization {
   sourceArtworkId?: number;
   sourceGeneratedImageId?: number;
+  /** An uploaded-file or AI-generated `SourceDesignAsset` id — set only when this part's
+   * artwork came from the customization editor's Upload or Generate-with-AI actions (a Gallery
+   * selection still uses `sourceArtworkId` above; a SourceDesignAsset is never created for
+   * that). See `lib/api.ts`'s `uploadDesignAsset`. */
+  sourceAssetId?: number;
   imageUrl?: string;
   userPrompt?: string;
   placementOverride?: PlacementOverride;
@@ -415,6 +480,7 @@ export interface DesignPlacement {
   templatePartId?: number | null;
   sourceArtworkId?: number | null;
   sourceGeneratedImageId?: number | null;
+  sourceAssetId?: number | null;
   sourceImageUrl?: string;
   sourcePrompt?: string;
   placementOverride: PlacementOverride;
