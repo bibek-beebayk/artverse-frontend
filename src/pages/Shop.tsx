@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Loader2, Package2, Search, ShoppingBag, SlidersHorizontal } from 'lucide-react';
+import { Loader2, Package2, Search, ShoppingBag, SlidersHorizontal, Shirt } from 'lucide-react';
 import type { CollectionSummary, Product } from '../types.ts';
-import { SmartImage } from '../components/Common.tsx';
-import { getProductsPage, getShopCategories } from '../lib/api.ts';
+import { SmartImage, Pagination } from '../components/Common.tsx';
+import { getMockupTemplates, getProductsPage, getShopCategories } from '../lib/api.ts';
 import { formatStartingPrice } from '../lib/pricing.ts';
 import { cn } from '../lib/utils.ts';
 
@@ -31,6 +31,7 @@ export function Shop() {
 
   const urlSearch = readParam(searchParams, 'search');
   const urlCategory = readParam(searchParams, 'category');
+  const urlProductType = readParam(searchParams, 'type');
   const urlOrdering = readParam(searchParams, 'ordering');
   const urlPage = Number(readParam(searchParams, 'page')) || 1;
 
@@ -41,6 +42,10 @@ export function Shop() {
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [categories, setCategories] = useState<CollectionSummary[]>([]);
+  // Populated from actual template data (getMockupTemplates()), never a hardcoded list — a
+  // product type only ever appears here if at least one active template uses it, so the filter
+  // can't offer a type the backend doesn't actually support.
+  const [productTypes, setProductTypes] = useState<{ value: string; label: string }[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [count, setCount] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
@@ -51,6 +56,22 @@ export function Shop() {
     getShopCategories()
       .then(setCategories)
       .catch((categoriesError) => console.error('Failed to load shop categories:', categoriesError));
+
+    getMockupTemplates()
+      .then((templates) => {
+        const seen = new Map<string, string>();
+        for (const template of templates) {
+          if (!seen.has(template.productType)) {
+            seen.set(template.productType, template.productTypeDisplay);
+          }
+        }
+        setProductTypes(
+          Array.from(seen.entries())
+            .map(([value, label]) => ({ value, label }))
+            .sort((a, b) => a.label.localeCompare(b.label))
+        );
+      })
+      .catch((templatesError) => console.error('Failed to load product types:', templatesError));
   }, []);
 
   useEffect(() => {
@@ -63,6 +84,7 @@ export function Shop() {
       pageSize: PAGE_SIZE,
       search: urlSearch || undefined,
       category: urlCategory || undefined,
+      productType: urlProductType || undefined,
       ordering: urlOrdering || undefined,
     })
       .then((response) => {
@@ -84,7 +106,7 @@ export function Shop() {
     return () => {
       isCancelled = true;
     };
-  }, [urlPage, urlSearch, urlCategory, urlOrdering]);
+  }, [urlPage, urlSearch, urlCategory, urlProductType, urlOrdering]);
 
   // Debounce: local typing -> URL update (which triggers the fetch above) 400ms after the user
   // stops typing, and resets to page 1 (a new search shouldn't stay on page 4 of the old results).
@@ -137,7 +159,7 @@ export function Shop() {
       }
       return next;
     });
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    document.getElementById('shop-catalogue-heading')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
 
   const activeFilterChips = useMemo(() => {
@@ -147,12 +169,16 @@ export function Shop() {
       const category = categories.find((c) => c.slug === urlCategory);
       chips.push({ key: 'category', label: `Category: ${category?.name ?? urlCategory}` });
     }
+    if (urlProductType) {
+      const type = productTypes.find((t) => t.value === urlProductType);
+      chips.push({ key: 'type', label: `Type: ${type?.label ?? urlProductType}` });
+    }
     if (urlOrdering) {
       const ordering = ORDERING_OPTIONS.find((o) => o.value === urlOrdering);
       if (ordering) chips.push({ key: 'ordering', label: `Sort: ${ordering.label}` });
     }
     return chips;
-  }, [urlSearch, urlCategory, urlOrdering, categories]);
+  }, [urlSearch, urlCategory, urlProductType, urlOrdering, categories, productTypes]);
 
   const clearFilter = (key: string) => {
     if (key === 'search') {
@@ -166,12 +192,12 @@ export function Shop() {
     // (see apps.shop.views._PUBLIC_PRODUCTS on the backend) — no client-side re-check needed
     // before navigating. No cart item, no saved design, and no design is chosen here; the
     // customization screen resolves the product's own first sellable variant and opens blank.
-    navigate(`/customize/product/${product.id}`);
+    navigate(`/customize/product/${product.slug}`);
   };
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 py-10 sm:py-12">
-      <header className="mb-10">
+      <header className="mb-10" id="shop-catalogue-heading">
         <h1 className="text-4xl sm:text-5xl md:text-6xl font-display font-black text-white uppercase tracking-tighter mb-3">
           Shop <span className="text-neon-pink neon-text-glow">Merch</span>
         </h1>
@@ -214,6 +240,29 @@ export function Shop() {
               {categories.map((category) => (
                 <option key={category.slug} value={category.slug}>
                   {category.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="relative">
+            <Shirt
+              size={14}
+              className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-500"
+            />
+            <label htmlFor="shop-product-type" className="sr-only">
+              Filter by product type
+            </label>
+            <select
+              id="shop-product-type"
+              value={urlProductType}
+              onChange={(event) => updateParam('type', event.target.value)}
+              className="rounded-2xl border border-white/10 bg-white/5 py-3.5 pl-9 pr-4 text-xs font-bold uppercase tracking-widest text-gray-300 outline-none transition-all focus:border-neon-pink/50"
+            >
+              <option value="">All Types</option>
+              {productTypes.map((type) => (
+                <option key={type.value} value={type.value}>
+                  {type.label}
                 </option>
               ))}
             </select>
@@ -350,32 +399,9 @@ export function Shop() {
             })}
           </div>
 
-          {totalPages > 1 && (
-            <nav
-              className="mt-10 flex items-center justify-center gap-2"
-              aria-label="Product catalogue pagination"
-            >
-              <button
-                type="button"
-                onClick={() => goToPage(urlPage - 1)}
-                disabled={urlPage <= 1}
-                className="rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-[10px] font-bold uppercase tracking-widest text-gray-300 transition-all hover:border-white/25 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                Previous
-              </button>
-              <span className="px-3 text-[10px] font-bold uppercase tracking-widest text-gray-500">
-                Page {urlPage} of {totalPages}
-              </span>
-              <button
-                type="button"
-                onClick={() => goToPage(urlPage + 1)}
-                disabled={urlPage >= totalPages}
-                className="rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-[10px] font-bold uppercase tracking-widest text-gray-300 transition-all hover:border-white/25 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                Next
-              </button>
-            </nav>
-          )}
+          <nav className="mt-10" aria-label="Product catalogue pagination">
+            <Pagination currentPage={urlPage} totalPages={totalPages} onPageChange={goToPage} />
+          </nav>
         </>
       )}
     </div>

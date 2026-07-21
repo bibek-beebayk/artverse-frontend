@@ -49,6 +49,7 @@ export interface VideoClip {
 export interface Product {
   id: string;
   name: string;
+  slug: string;
   category: string;
   /** Derived server-side from the cheapest valid (available, priced, product/template-matched)
    * variant — `base_cost + markup`, same formula the cart pricing engine uses. Null when the

@@ -243,6 +243,7 @@ export interface BackendAuthenticatedUser {
   display_name: string;
   avatar: string;
   is_artist: boolean;
+  is_staff: boolean;
 }
 
 interface GoogleLoginResponse {
@@ -488,6 +489,7 @@ function mapProduct(product: BackendProduct): Product {
   return {
     id: String(product.id),
     name: product.name,
+    slug: product.slug,
     category: product.category.name,
     startingPrice: product.starting_price,
     isAvailable: product.is_available,
@@ -663,6 +665,15 @@ export async function getGalleryCategories() {
   return ["All", ...categories.map((category) => category.name)];
 }
 
+/** Full category objects (id/name/slug) — the customization editor's gallery-selector category
+ * filter needs the slug (what `?category=` on the artwork list actually filters by;
+ * getGalleryCategories() above discards it and returns display names only). Mirrors
+ * getShopCategories()'s identical relationship to getProductCategories(). */
+export async function getGalleryFilterCategories(): Promise<CollectionSummary[]> {
+  const categories = await fetchJson<BackendCategory[]>("/gallery/categories/");
+  return categories.map((category) => ({ id: String(category.id), name: category.name, slug: category.slug }));
+}
+
 export async function getCollections() {
   const collections = await fetchJson<BackendCollection[]>("/gallery/collections/");
   return collections.map(mapCollection);
@@ -743,6 +754,15 @@ export async function getProducts() {
   return response.results.map(mapProduct);
 }
 
+/** Single-product lookup by slug — the customization editor's `/customize/product/:productSlug`
+ * route uses this instead of fetching the whole catalogue and searching client-side. Throws
+ * ApiError(status=404) for a product that's missing, deactivated, or has no sellable variant
+ * (apps.shop.views.ProductDetailView applies the same public-visibility filter as the list). */
+export async function getProductBySlug(slug: string): Promise<Product> {
+  const product = await fetchJson<BackendProduct>(`/shop/products/${encodeURIComponent(slug)}/`);
+  return mapProduct(product);
+}
+
 /** Paginated, searchable/filterable/sortable product catalogue — used by the Shop page. */
 export async function getProductsPage(params: ProductSearchParams = {}): Promise<PaginatedProducts> {
   const search = new URLSearchParams();
@@ -782,10 +802,112 @@ export async function uploadDesignAsset(
   return mapSourceDesignAsset(response);
 }
 
+/** Same upload as uploadDesignAsset(), via XMLHttpRequest instead of fetch so real progress
+ * events are available — fetch's request-body streaming isn't observable cross-browser today.
+ * Only used where the caller actually renders a progress bar (the customization editor's Upload
+ * control); everywhere else keeps using the simpler fetch-based uploadDesignAsset(). */
+export function uploadDesignAssetWithProgress(
+  file: File | Blob,
+  sourceType: "user_upload" | "ai_generated" = "user_upload",
+  onProgress?: (percent: number) => void
+): Promise<SourceDesignAsset> {
+  return new Promise((resolve, reject) => {
+    const formData = new FormData();
+    formData.append("file", file, file instanceof File ? file.name : "upload.png");
+    formData.append("source_type", sourceType);
+
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `${API_BASE_URL}/generator/design-assets/upload/`);
+    const accessToken = getBackendAccessToken();
+    if (accessToken) {
+      xhr.setRequestHeader("Authorization", `Bearer ${accessToken}`);
+    }
+
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable && onProgress) {
+        onProgress(Math.round((event.loaded / event.total) * 100));
+      }
+    };
+
+    xhr.onload = () => {
+      let data: Record<string, unknown> = {};
+      try {
+        data = JSON.parse(xhr.responseText || "{}");
+      } catch {
+        // Non-JSON body — data stays {}, the status-based branch below still reports a failure.
+      }
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(mapSourceDesignAsset(data as unknown as BackendSourceDesignAsset));
+      } else {
+        const message =
+          (data as { detail?: string }).detail || formatFieldErrors(data) || `Upload failed with status ${xhr.status}`;
+        reject(new ApiError(message, xhr.status, data));
+      }
+    };
+    xhr.onerror = () => reject(new ApiError("Network error — could not reach the server. Check your connection and try again.", 0));
+
+    xhr.send(formData);
+  });
+}
+
+interface BackendGeneratedImage {
+  id: number;
+  prompt: string;
+  image: string | null;
+  image_url: string;
+  created_at: string;
+}
+
+export interface GeneratedImageResult {
+  id: number;
+  prompt: string;
+  imageUrl: string;
+  createdAt: string;
+}
+
+function mapGeneratedImage(image: BackendGeneratedImage): GeneratedImageResult {
+  return {
+    id: image.id,
+    prompt: image.prompt,
+    imageUrl: resolveAssetUrl(image.image) || image.image_url,
+    createdAt: image.created_at,
+  };
+}
+
+/** POST /api/generator/requests/ — runs an AI generation server-side (the only place the Gemini
+ * API key is used; see apps.generator.services.generate_ai_image) and returns the resulting
+ * image. Requires authentication, same as every other generator mutation. Shared by
+ * useAiGeneration() so Generator.tsx and Customization.tsx submit identically. */
+export async function submitAiGeneration(input: { prompt: string; aspectRatio: string }): Promise<GeneratedImageResult> {
+  const response = await sendJson<{ image: BackendGeneratedImage }>("/generator/requests/", {
+    method: "POST",
+    body: JSON.stringify({ prompt: input.prompt, aspect_ratio: input.aspectRatio }),
+  });
+  return mapGeneratedImage(response.image);
+}
+
+/** POST /api/generator/design-assets/from-generated-image/ — promotes a generated image the
+ * caller already owns into a private SourceDesignAsset, without re-uploading the bytes (they
+ * already live server-side from submitAiGeneration). This is what "Use This Design" calls. */
+export async function promoteGeneratedImageToSourceAsset(generatedImageId: number): Promise<SourceDesignAsset> {
+  const response = await sendJson<BackendSourceDesignAsset>("/generator/design-assets/from-generated-image/", {
+    method: "POST",
+    body: JSON.stringify({ generated_image_id: generatedImageId }),
+  });
+  return mapSourceDesignAsset(response);
+}
+
 export async function getMockupTemplates(productType?: string) {
   const search = productType ? `?product_type=${encodeURIComponent(productType)}` : "";
   const templates = await fetchJson<BackendMockupTemplate[]>(`/generator/mockup-templates/${search}`);
   return templates.map(mapMockupTemplate);
+}
+
+/** Single-template lookup by id — pairs with getProductBySlug so the customization editor loads
+ * exactly the one product's linked template instead of the full template list. */
+export async function getMockupTemplateById(templateId: number): Promise<MockupTemplate> {
+  const template = await fetchJson<BackendMockupTemplate>(`/generator/mockup-templates/${templateId}/`);
+  return mapMockupTemplate(template);
 }
 
 export async function getProductVariants(filter: { productId?: number; templateId?: number } = {}) {

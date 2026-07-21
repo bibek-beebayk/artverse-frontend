@@ -20,6 +20,7 @@ interface AuthContextType {
   loading: boolean;
   favorites: string[];
   authError: string | null;
+  isStaff: boolean;
   isFavorited: (id: string) => boolean;
   toggleFavorite: (artwork: { id: string, title: string, imageUrl: string }) => Promise<boolean>;
   signIn: () => Promise<void>;
@@ -34,6 +35,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [favorites, setFavorites] = useState<string[]>([]);
   const [authError, setAuthError] = useState<string | null>(null);
+  // Django's is_staff, not Firebase's own User object (which has no notion of it) — sourced from
+  // the backend login/session-resync response, which fires on every onAuthStateChanged (i.e.
+  // every page load with a persisted Firebase session), so this stays fresh without extra polling.
+  const [isStaff, setIsStaff] = useState(false);
 
   const clearAuthError = () => setAuthError(null);
 
@@ -78,12 +83,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (u) {
         try {
           setAuthError(null);
-          await syncBackendGoogleSession();
+          const backendUser = await syncBackendGoogleSession();
+          setIsStaff(backendUser.is_staff === true);
         } catch (error) {
           console.error('Backend session sync error:', error);
           setAuthError(mapAuthError(error));
           clearBackendAuthTokens();
           setFavorites([]);
+          setIsStaff(false);
           setUser(null);
           await logout().catch(() => undefined);
           setLoading(false);
@@ -117,6 +124,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
       } else {
         setFavorites([]);
+        setIsStaff(false);
         clearBackendAuthTokens();
       }
 
@@ -166,6 +174,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setAuthError(mapAuthError(error));
       clearBackendAuthTokens();
       setFavorites([]);
+      setIsStaff(false);
       setUser(null);
       await logout().catch(() => undefined);
     }
@@ -204,11 +213,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ 
-      user, 
-      loading, 
-      favorites, 
+    <AuthContext.Provider value={{
+      user,
+      loading,
+      favorites,
       authError,
+      isStaff,
       isFavorited,
       toggleFavorite,
       signIn,

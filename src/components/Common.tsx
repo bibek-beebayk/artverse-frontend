@@ -385,8 +385,10 @@ export function Pagination({ currentPage, totalPages, onPageChange }: Pagination
     <div className="mt-16">
       <div className="flex items-center justify-between gap-3 sm:hidden">
         <button
+          type="button"
           disabled={currentPage === 1}
           onClick={() => onPageChange(currentPage - 1)}
+          aria-label="Previous page"
           className="h-11 min-w-11 rounded-xl glass-card px-4 flex items-center justify-center gap-2 text-white disabled:opacity-20 disabled:cursor-not-allowed hover:border-white/30 transition-all"
         >
           <ChevronLeft size={18} />
@@ -398,8 +400,10 @@ export function Pagination({ currentPage, totalPages, onPageChange }: Pagination
         </div>
 
         <button
+          type="button"
           disabled={currentPage === totalPages}
           onClick={() => onPageChange(currentPage + 1)}
+          aria-label="Next page"
           className="h-11 min-w-11 rounded-xl glass-card px-4 flex items-center justify-center gap-2 text-white disabled:opacity-20 disabled:cursor-not-allowed hover:border-white/30 transition-all"
         >
           <span className="text-[10px] font-bold uppercase tracking-widest">Next</span>
@@ -409,13 +413,15 @@ export function Pagination({ currentPage, totalPages, onPageChange }: Pagination
 
       <div className="hidden sm:flex items-center justify-center gap-4">
         <button
+          type="button"
           disabled={currentPage === 1}
           onClick={() => onPageChange(currentPage - 1)}
+          aria-label="Previous page"
           className="w-12 h-12 rounded-xl glass-card flex items-center justify-center text-white disabled:opacity-20 disabled:cursor-not-allowed hover:border-white/30 transition-all"
         >
           <ChevronLeft size={20} />
         </button>
-        
+
         <div className="flex items-center gap-2 flex-wrap justify-center">
           {visiblePages.map((page, index) => {
             const previousPage = visiblePages[index - 1];
@@ -424,10 +430,13 @@ export function Pagination({ currentPage, totalPages, onPageChange }: Pagination
             return (
               <div key={page} className="flex items-center gap-2">
                 {needsGap ? (
-                  <span className="px-2 text-xs font-mono text-gray-500">...</span>
+                  <span className="px-2 text-xs font-mono text-gray-500" aria-hidden="true">...</span>
                 ) : null}
                 <button
+                  type="button"
                   onClick={() => onPageChange(page)}
+                  aria-label={`Page ${page}`}
+                  aria-current={currentPage === page ? 'page' : undefined}
                   className={cn(
                     "w-12 h-12 rounded-xl font-mono text-sm border transition-all",
                     currentPage === page
@@ -443,8 +452,10 @@ export function Pagination({ currentPage, totalPages, onPageChange }: Pagination
         </div>
 
         <button
+          type="button"
           disabled={currentPage === totalPages}
           onClick={() => onPageChange(currentPage + 1)}
+          aria-label="Next page"
           className="w-12 h-12 rounded-xl glass-card flex items-center justify-center text-white disabled:opacity-20 disabled:cursor-not-allowed hover:border-white/30 transition-all"
         >
           <ChevronRight size={20} />

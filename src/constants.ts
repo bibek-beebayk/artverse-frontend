@@ -438,6 +438,7 @@ export const PRODUCTS: Product[] = [
   {
     id: 'p1',
     name: 'Neon Nexus Megacity Oversized T-Shirt',
+    slug: 'neon-nexus-megacity-oversized-t-shirt',
     category: 'T-shirts',
     startingPrice: '39.99',
     isAvailable: true,
@@ -448,6 +449,7 @@ export const PRODUCTS: Product[] = [
   {
     id: 'p2',
     name: 'Nebula Sovereign Cathedral Canvas Print',
+    slug: 'nebula-sovereign-cathedral-canvas-print',
     category: 'Posters',
     startingPrice: '45.00',
     isAvailable: true,
@@ -458,6 +460,7 @@ export const PRODUCTS: Product[] = [
   {
     id: 'p3',
     name: 'Spheres of Premium Silence Ceramic Mug',
+    slug: 'spheres-of-premium-silence-ceramic-mug',
     category: 'Mugs',
     startingPrice: '18.00',
     isAvailable: true,

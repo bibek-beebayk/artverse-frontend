@@ -150,7 +150,7 @@ function PageRoutes() {
           <Route path="/collections/:collectionId" element={<CollectionDetail />} />
         </Route>
         <Route path="/customize" element={<ProtectedDreamAccess component={Customization} />} />
-        <Route path="/customize/product/:productId" element={<ProtectedDreamAccess component={Customization} />} />
+        <Route path="/customize/product/:productSlug" element={<ProtectedDreamAccess component={Customization} />} />
       </Routes>
     </Suspense>
   );

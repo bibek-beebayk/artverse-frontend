@@ -11,6 +11,7 @@ import { ImageModal, SmartImage } from '../components/Common.tsx';
 import { createMockupRender, getMockupTemplates, getProducts } from '../lib/api.ts';
 import { formatStartingPrice } from '../lib/pricing.ts';
 import { describeSellableSelectionReason, validateSellableSelection } from '../lib/sellableSelection.ts';
+import { useAiGeneration } from '../hooks/useAiGeneration.ts';
 
 const ASPECT_RATIO_OPTIONS = [
   { value: '1:1', label: 'Square' },
@@ -123,9 +124,8 @@ export function Generator() {
   const [prompt, setPrompt] = useState('');
   const [selectedAspectRatio, setSelectedAspectRatio] =
     useState<(typeof ASPECT_RATIO_OPTIONS)[number]['value']>('1:1');
-  const [isGenerating, setIsGenerating] = useState(false);
+  const { submitGeneration, isGenerating, error, resetGeneration } = useAiGeneration();
   const [generatedImage, setGeneratedImage] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -145,7 +145,6 @@ export function Generator() {
     createdAt: string;
     source: 'generated';
   } | null>(null);
-  const geminiApiKey = import.meta.env.VITE_GEMINI_API_KEY;
 
   useEffect(() => {
     const loadTemplates = async () => {
@@ -317,13 +316,8 @@ export function Generator() {
 
   const generateImage = async () => {
     if (!prompt.trim()) return;
-    if (!geminiApiKey) {
-      setError('Missing Gemini API key. Set VITE_GEMINI_API_KEY or GEMINI_API_KEY before generating images.');
-      return;
-    }
 
-    setIsGenerating(true);
-    setError(null);
+    resetGeneration();
     setGeneratedImage(null);
     setSaveSuccess(false);
     setSelectedDesign(null);
@@ -332,51 +326,20 @@ export function Generator() {
     setMockupError(null);
 
     try {
-      const { GoogleGenAI } = await import('@google/genai');
-      const ai = new GoogleGenAI({ apiKey: geminiApiKey });
-      const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash-image',
-        contents: {
-          parts: [{ text: `Digital art, cyberpunk style, neon lights, highly detailed, futuristic: ${prompt}` }],
-        },
-        config: {
-          imageConfig: {
-            aspectRatio: selectedAspectRatio,
-          },
-        },
+      const image = await submitGeneration({ prompt, aspectRatio: selectedAspectRatio });
+      setGeneratedImage(image.imageUrl);
+      setSelectedDesign({
+        id: `art-${image.id}`,
+        imageUrl: image.imageUrl,
+        title: prompt,
+        description: 'Freshly generated in Dream Machine',
+        createdAt: image.createdAt,
+        source: 'generated',
       });
-
-      let foundImage = false;
-      if (response.candidates?.[0]?.content?.parts) {
-        for (const part of response.candidates[0].content.parts) {
-          if (part.inlineData) {
-            const base64Data = part.inlineData.data;
-            const finalImg = `data:image/png;base64,${base64Data}`;
-            const uniqueArtId = `art-${Date.now()}`;
-
-            setGeneratedImage(finalImg);
-              setSelectedDesign({
-                id: uniqueArtId,
-                imageUrl: finalImg,
-                title: prompt,
-                description: 'Freshly generated in Dream Machine',
-                createdAt: new Date().toISOString(),
-                source: 'generated',
-              });
-            foundImage = true;
-            break;
-          }
-        }
-      }
-
-      if (!foundImage) {
-        throw new Error('No image was returned from the neural network.');
-      }
     } catch (err: unknown) {
+      // useAiGeneration already captured this in its own `error` state — nothing else to do
+      // here, this catch just stops it from becoming an unhandled rejection.
       console.error('Generation Error:', err);
-      setError(err instanceof Error ? err.message : 'A neural link failure occurred. Please retry.');
-    } finally {
-      setIsGenerating(false);
     }
   };
 
@@ -400,13 +363,23 @@ export function Generator() {
     }
   };
 
-  const downloadImage = () => {
+  const downloadImage = async () => {
     const imageToDownload = selectedDesign?.imageUrl || generatedImage;
     if (!imageToDownload) return;
-    const link = document.createElement('a');
-    link.href = imageToDownload;
-    link.download = `artverse-ai-${Date.now()}.png`;
-    link.click();
+    // The image now lives at a real backend URL rather than a data: URL, so a bare
+    // `<a download href>` isn't reliable cross-origin — fetch it and download the blob instead.
+    try {
+      const response = await fetch(imageToDownload);
+      const blob = await response.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = objectUrl;
+      link.download = `artverse-ai-${Date.now()}.png`;
+      link.click();
+      URL.revokeObjectURL(objectUrl);
+    } catch (err) {
+      console.error('Failed to download image:', err);
+    }
   };
 
   const previewAspectClass =

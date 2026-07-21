@@ -6,6 +6,7 @@ interface ArtworkActionsMenuProps {
   onOpenGallery: () => void;
   onUploadClick: () => void;
   isUploading: boolean;
+  uploadProgress?: number;
   onGenerateAI: () => void;
   onAddText: () => void;
   onRemove: () => void;
@@ -24,12 +25,22 @@ export function ArtworkActionsMenu({
   onOpenGallery,
   onUploadClick,
   isUploading,
+  uploadProgress,
   onGenerateAI,
   onAddText,
   onRemove,
   canRemove,
 }: ArtworkActionsMenuProps) {
   const isRail = layout === 'rail';
+  // Once the active part has artwork, these two actions read as "replace what's there" rather
+  // than "add something new" — Upload/Add Text/Remove already say what they do either way.
+  const galleryLabel = canRemove ? 'Replace' : 'Gallery';
+  const aiLabel = canRemove ? 'Generate' : 'AI';
+  const uploadLabel = isUploading
+    ? uploadProgress && uploadProgress > 0
+      ? `${uploadProgress}%`
+      : 'Uploading'
+    : 'Upload';
 
   return (
     <div
@@ -40,37 +51,41 @@ export function ArtworkActionsMenu({
       <button
         type="button"
         onClick={onOpenGallery}
+        aria-label={canRemove ? 'Replace design from gallery' : 'Choose design from gallery'}
         className={cn(ACTION_BUTTON_BASE, isRail ? 'h-14 w-14 flex-col justify-center gap-1 px-1 text-center' : 'w-full px-4 py-3')}
       >
         <ImageIcon size={isRail ? 17 : 15} />
         <span className={isRail ? 'text-[8px] font-bold uppercase tracking-wide' : 'text-[10px] font-bold uppercase tracking-widest'}>
-          Gallery
+          {galleryLabel}
         </span>
       </button>
       <button
         type="button"
         onClick={onUploadClick}
         disabled={isUploading}
+        aria-label={canRemove ? 'Upload a replacement design' : 'Upload a design'}
         className={cn(ACTION_BUTTON_BASE, isRail ? 'h-14 w-14 flex-col justify-center gap-1 px-1 text-center' : 'w-full px-4 py-3')}
       >
         {isUploading ? <Loader2 size={isRail ? 17 : 15} className="animate-spin" /> : <Upload size={isRail ? 17 : 15} />}
         <span className={isRail ? 'text-[8px] font-bold uppercase tracking-wide' : 'text-[10px] font-bold uppercase tracking-widest'}>
-          {isUploading ? 'Uploading' : 'Upload'}
+          {uploadLabel}
         </span>
       </button>
       <button
         type="button"
         onClick={onGenerateAI}
+        aria-label={canRemove ? 'Generate a replacement design with AI' : 'Generate a design with AI'}
         className={cn(ACTION_BUTTON_BASE, isRail ? 'h-14 w-14 flex-col justify-center gap-1 px-1 text-center' : 'w-full px-4 py-3')}
       >
         <Wand2 size={isRail ? 17 : 15} />
         <span className={isRail ? 'text-[8px] font-bold uppercase tracking-wide' : 'text-[10px] font-bold uppercase tracking-widest'}>
-          AI
+          {aiLabel}
         </span>
       </button>
       <button
         type="button"
         onClick={onAddText}
+        aria-label="Add a text layer"
         className={cn(ACTION_BUTTON_BASE, isRail ? 'h-14 w-14 flex-col justify-center gap-1 px-1 text-center' : 'w-full px-4 py-3')}
       >
         <Type size={isRail ? 17 : 15} />
@@ -82,6 +97,7 @@ export function ArtworkActionsMenu({
         <button
           type="button"
           onClick={onRemove}
+          aria-label="Remove the current design from this part"
           className={cn(
             'flex items-center gap-2.5 rounded-xl border border-neon-pink/30 bg-neon-pink/10 text-neon-pink transition-all hover:bg-neon-pink hover:text-white',
             isRail ? 'h-14 w-14 flex-col justify-center gap-1 px-1 text-center' : 'w-full px-4 py-3'
