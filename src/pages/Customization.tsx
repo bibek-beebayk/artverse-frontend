@@ -4,29 +4,16 @@ import { useCart } from '../context/CartContext.tsx';
 import { useAuth } from '../context/AuthContext.tsx';
 import { motion, AnimatePresence } from 'motion/react';
 import {
-  ChevronLeft,
   Layers,
   Check,
   ShoppingBag,
   Maximize2,
-  HelpCircle,
   ShieldCheck,
   Truck,
-  Sparkles,
-  Info,
   Move,
   Crop,
-  Type,
   Save,
   Loader2,
-  AlertCircle,
-  Lock,
-  Unlock,
-  Eye,
-  EyeOff,
-  Copy as CopyIcon,
-  Undo2,
-  Redo2,
   FileOutput,
   ExternalLink,
   RefreshCw,
@@ -39,6 +26,11 @@ import {
 } from 'lucide-react';
 import { cn } from '../lib/utils.ts';
 import { ImageModal, SmartImage } from '../components/Common.tsx';
+import { EditorTopBar } from '../components/editor/EditorTopBar.tsx';
+import { ArtworkActionsMenu } from '../components/editor/ArtworkActionsMenu.tsx';
+import { VariantsAndLayersPanel } from '../components/editor/VariantsAndLayersPanel.tsx';
+import { EditorBottomNav } from '../components/editor/EditorBottomNav.tsx';
+import { EditorSheet } from '../components/editor/EditorSheet.tsx';
 import { TShirtTemplate } from '../components/TShirtTemplate.tsx';
 import {
   ApiError,
@@ -608,6 +600,9 @@ export function Customization() {
   // XOR AI), and marks the part dirty/print-file-stale — never three slightly different copies.
   const [isGallerySelectorOpen, setIsGallerySelectorOpen] = useState(false);
   const [isAiPanelOpen, setIsAiPanelOpen] = useState(false);
+  // Which mobile bottom-sheet (if any) is open — the desktop rail/aside render the same
+  // ArtworkActionsMenu/VariantsAndLayersPanel content inline instead of behind a sheet.
+  const [mobileSheet, setMobileSheet] = useState<'actions' | 'variants' | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -2502,57 +2497,57 @@ export function Customization() {
     }
   };
 
+  const variantSummary = [selectedColour, selectedSize].filter(Boolean).join(' · ') || null;
+
   return (
-    <div className="bg-cyber-black text-white min-h-screen">
-      {/* Upper Navigation bar */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 pt-8 sm:pt-12">
-        <Link 
-          to="/generator" 
-          className="inline-flex items-center gap-2 text-[10px] sm:text-xs uppercase tracking-widest text-gray-500 hover:text-white transition-colors"
-        >
-          <ChevronLeft size={16} />
-          Back to Dream Workspace
-        </Link>
-      </div>
+    <div className="flex min-h-screen flex-col bg-cyber-black text-white">
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/png,image/jpeg,image/webp"
+        aria-label="Upload design artwork"
+        className="sr-only"
+        onChange={(event) => {
+          void handleFileSelected(event.target.files?.[0] ?? null);
+        }}
+      />
 
-      {/* Main product configuration container */}
-      <div className="max-w-[1600px] mx-auto px-4 sm:px-6 py-8 sm:py-12 grid grid-cols-1 xl:grid-cols-[minmax(0,1.35fr)_minmax(420px,0.85fr)] gap-8 xl:gap-14 items-start">
-        
-        {/* Dynamic Display Mockup Box */}
-        <section className="space-y-4 lg:space-y-6">
-          <div className="sticky top-24 z-20 space-y-3 xl:static xl:space-y-6">
-          <div className="rounded-2xl border border-neon-blue/15 bg-neon-blue/5 px-4 py-3 sm:hidden">
-            <p className="text-[9px] font-bold uppercase tracking-[0.3em] text-neon-blue">Live Preview</p>
-            <p className="mt-1 text-[10px] uppercase tracking-widest text-gray-400">
-              Keep adjusting the controls below. Your design updates here instantly.
-            </p>
-          </div>
+      <EditorTopBar
+        onBack={() => navigate('/generator')}
+        productType={customization.productType}
+        templateName={customization.templateName}
+        variantSummary={variantSummary}
+        undoDisabled={historyCounts.past === 0}
+        redoDisabled={historyCounts.future === 0}
+        onUndo={undo}
+        onRedo={redo}
+        isPreviewMode={isRealisticPreviewOpen}
+        onSelectEdit={() => setIsRealisticPreviewOpen(false)}
+        onSelectPreview={() => void handleGenerateRealisticPreview()}
+        previewDisabled={showPreviewLoading || !activePartHasImage}
+        saveStatus={saveStatus}
+        saveError={saveError}
+        onSave={() => void handleSaveDesign()}
+      />
 
-          <div className="flex items-center justify-end gap-2 px-2">
-            <button
-              type="button"
-              onClick={undo}
-              disabled={historyCounts.past === 0}
-              className="flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-[9px] font-bold uppercase tracking-widest text-gray-300 transition-all hover:border-white/30 hover:text-white disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:border-white/10 disabled:hover:text-gray-300"
-              title="Undo (Ctrl/Cmd+Z)"
-            >
-              <Undo2 size={13} /> Undo
-            </button>
-            <button
-              type="button"
-              onClick={redo}
-              disabled={historyCounts.future === 0}
-              className="flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-[9px] font-bold uppercase tracking-widest text-gray-300 transition-all hover:border-white/30 hover:text-white disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:border-white/10 disabled:hover:text-gray-300"
-              title="Redo (Ctrl/Cmd+Shift+Z)"
-            >
-              <Redo2 size={13} /> Redo
-            </button>
-          </div>
+      <div className="mx-auto flex w-full max-w-[1800px] flex-1 flex-col gap-6 px-4 py-5 pb-24 sm:px-6 lg:flex-row lg:items-start lg:gap-8 lg:pb-8">
+        <aside className="hidden shrink-0 lg:block">
+          <ArtworkActionsMenu
+            layout="rail"
+            onOpenGallery={() => setIsGallerySelectorOpen(true)}
+            onUploadClick={() => fileInputRef.current?.click()}
+            isUploading={isUploading}
+            onGenerateAI={() => setIsAiPanelOpen(true)}
+            onAddText={addTextLayer}
+            onRemove={removeActivePartArtwork}
+            canRemove={activePartHasImage}
+          />
+        </aside>
 
-
+        <section className="min-w-0 flex-1 space-y-4">
           {((customization.templateParts && customization.templateParts.length > 1) ||
             (customization.productType === 'tshirt' && !customization.templateParts)) && (
-            <div className="flex gap-4 border-b border-white/10 mb-4 px-2">
+            <div className="flex flex-wrap gap-2">
               {(customization.templateParts && customization.templateParts.length > 0
                 ? customization.templateParts.map((part) => part.name)
                 : ['front', 'back', 'left_sleeve', 'right_sleeve']
@@ -2576,12 +2571,12 @@ export function Customization() {
                         : `The selected colour/size doesn't support printing on ${part.replace('_', ' ')}`
                     }
                     className={cn(
-                      "pb-2 text-xs uppercase tracking-widest border-b-2 transition-colors",
+                      "px-4 py-2 rounded-full border text-[10px] font-bold uppercase tracking-widest transition-all",
                       !isSupported
-                        ? "border-transparent text-gray-700 cursor-not-allowed opacity-40"
+                        ? "border-white/5 bg-white/5 text-gray-700 cursor-not-allowed opacity-40"
                         : activePart === part
-                          ? "border-neon-blue text-neon-blue"
-                          : "border-transparent text-gray-500 hover:text-white"
+                          ? "border-white bg-white text-cyber-black font-black"
+                          : "border-white/10 bg-white/5 text-gray-400 hover:text-white"
                     )}
                   >
                     {part.replace('_', ' ')}
@@ -2591,54 +2586,8 @@ export function Customization() {
             </div>
           )}
 
-          {/* Artwork action menu (section 6) — applies to the active part only. A left toolbar
-              on desktop, a wrapping horizontal bar on mobile; never covers the canvas below. */}
-          <div className="flex flex-wrap items-center gap-2 px-2" role="toolbar" aria-label="Artwork actions">
-            <button
-              type="button"
-              onClick={() => setIsGallerySelectorOpen(true)}
-              className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-[10px] font-bold uppercase tracking-widest text-gray-200 transition-all hover:border-neon-blue/40 hover:text-white"
-            >
-              <ImageIcon size={14} /> Choose from Gallery
-            </button>
-            <button
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
-              disabled={isUploading}
-              className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-[10px] font-bold uppercase tracking-widest text-gray-200 transition-all hover:border-neon-blue/40 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {isUploading ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
-              {isUploading ? 'Uploading...' : 'Upload Design'}
-            </button>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/png,image/jpeg,image/webp"
-              aria-label="Upload design artwork"
-              className="sr-only"
-              onChange={(event) => {
-                void handleFileSelected(event.target.files?.[0] ?? null);
-              }}
-            />
-            <button
-              type="button"
-              onClick={() => setIsAiPanelOpen(true)}
-              className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-[10px] font-bold uppercase tracking-widest text-gray-200 transition-all hover:border-neon-purple/40 hover:text-white"
-            >
-              <Wand2 size={14} /> Generate with AI
-            </button>
-            {activePartHasImage && (
-              <button
-                type="button"
-                onClick={removeActivePartArtwork}
-                className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-[10px] font-bold uppercase tracking-widest text-gray-400 transition-all hover:border-red-400/40 hover:text-red-300"
-              >
-                <Trash2 size={14} /> Remove Current Design
-              </button>
-            )}
-          </div>
           {uploadError && (
-            <div className="mx-2 rounded-xl border border-neon-pink/25 bg-neon-pink/10 px-4 py-2.5 text-[10px] font-bold uppercase tracking-widest text-neon-pink">
+            <div className="rounded-xl border border-neon-pink/25 bg-neon-pink/10 px-4 py-2.5 text-[10px] font-bold uppercase tracking-widest text-neon-pink">
               {uploadError}
             </div>
           )}
@@ -2995,183 +2944,132 @@ export function Customization() {
             </div>
           )}
 
-          {customization.basePlacement && (
-            <div className="lg:hidden glass-card border-white/10 p-4 space-y-4">
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <p className="text-[9px] font-bold uppercase tracking-[0.3em] text-neon-blue">Live Adjustment Deck</p>
-                  <p className="mt-1 text-[10px] uppercase tracking-widest text-gray-500">
-                    Drag the print box on the preview to move it. Pull the pink handle to resize it.
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    pushHistorySnapshot();
-                    setPlacementDraft(
-                      customization.basePlacement
-                        ? {
-                            x: customization.basePlacement.x,
-                            y: customization.basePlacement.y,
-                            width: customization.basePlacement.width,
-                            height: customization.basePlacement.height,
-                          }
-                        : null
-                    );
-                    setPlacementRotationDraft(null);
-                    setCornerRadius(0);
-                    setAppliedCropOverride(null);
-                    setDraftCropRect({ left: 0, top: 0, width: 100, height: 100 });
-                  }}
-                  className="shrink-0 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-[9px] font-extrabold uppercase tracking-widest text-gray-300 transition-all hover:border-white/20 hover:text-white"
-                >
-                  Reset
-                </button>
-              </div>
+          {/* Purchase panel — quantity, price, shipping/production notices, Generate Realistic
+              Preview and Add to Cart. Lives at the bottom of the canvas column (not the
+              Variants/Layers aside) so it stays visible on both mobile and desktop without
+              needing to reparent between breakpoints. */}
+          <div>
+            <label className="block text-[8px] font-bold text-gray-400 uppercase tracking-[0.3em] mb-3">
+              Production Quantity
+            </label>
+            <div className="inline-flex items-center gap-3 bg-white/5 border border-white/10 rounded-xl p-1.5">
+              <button
+                onClick={() => setQuantity(q => Math.max(1, q - 1))}
+                className="w-10 h-10 rounded-lg hover:bg-white/5 text-lg font-bold flex items-center justify-center transition-colors"
+              >
+                -
+              </button>
+              <span className="w-12 text-center text-sm font-mono font-bold">{quantity}</span>
+              <button
+                onClick={() => setQuantity(q => q + 1)}
+                className="w-10 h-10 rounded-lg hover:bg-white/5 text-lg font-bold flex items-center justify-center transition-colors"
+              >
+                +
+              </button>
+            </div>
+          </div>
 
-              <div className="space-y-4">
-                <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-                  <div className="flex items-start gap-3">
-                    <Move size={14} className="mt-0.5 text-neon-blue" />
-                    <div>
-                      <p className="text-[9px] font-extrabold uppercase tracking-[0.28em] text-white">
-                        Direct Placement Mode
-                      </p>
-                      <p className="mt-2 text-[10px] uppercase tracking-widest text-gray-500">
-                        Move and resize the design right on the preview instead of using sliders.
-                      </p>
-                    </div>
-                  </div>
-                </div>
-
-                <div>
-                  <div className="mb-2 flex items-center justify-between text-[9px] uppercase tracking-widest text-gray-500">
-                    <span className="inline-flex items-center gap-2">
-                      <Sparkles size={12} />
-                      Corner Radius
-                    </span>
-                    <span>{cornerRadius}px</span>
-                  </div>
-                  <input
-                    type="range"
-                    min={0}
-                    max={120}
-                    step={2}
-                    value={cornerRadius}
-                    onPointerDown={beginContinuousEdit}
-                    onChange={(event) => {
-                      beginContinuousEdit();
-                      setCornerRadius(Number(event.target.value));
-                    }}
-                    onPointerUp={endContinuousEdit}
-                    className="w-full accent-[var(--color-neon-blue)]"
-                  />
-                </div>
+          {/* Production readiness notes — deliberately no shipping/refund promises here.
+              Real checkout, shipping and fulfilment aren't built yet (see CartPage.tsx). */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="flex items-start gap-3 bg-white/5 p-4 rounded-xl">
+              <Truck className="text-neon-blue mt-0.5" size={16} />
+              <div>
+                <p className="text-[9px] font-bold uppercase tracking-wider text-white">Shipping Coming Soon</p>
+                <p className="text-[8px] text-gray-500 uppercase tracking-widest mt-0.5">Shipping and delivery aren't available yet.</p>
               </div>
-
-              <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-                <div className="flex flex-col items-start gap-3">
-                  <div>
-                    <label className="flex items-center gap-2 text-[8px] font-bold text-gray-400 uppercase tracking-[0.3em] mb-2">
-                      <Crop size={12} />
-                      Design Crop
-                    </label>
-                    <p className="text-[9px] uppercase tracking-widest text-gray-500">
-                      {hasAppliedCrop
-                        ? `Crop applied • ${Math.round(appliedCropOverride?.width ?? 100)} by ${Math.round(appliedCropOverride?.height ?? 100)}`
-                        : 'Full design is currently visible'}
-                    </p>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setDraftCropRect(appliedCropOverride ?? { left: 0, top: 0, width: 100, height: 100 });
-                        setIsCropStudioOpen(true);
-                      }}
-                      disabled={!activePartHasImage}
-                      title={activePartHasImage ? undefined : 'Add a design to this part first'}
-                      className="px-4 py-2 text-[9px] font-extrabold uppercase tracking-widest rounded-lg border border-white/10 bg-white/5 text-gray-300 hover:text-white hover:border-white/20 transition-all disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-white/10 disabled:hover:text-gray-300"
-                    >
-                      {hasAppliedCrop ? 'Edit Crop' : 'Open Crop Studio'}
-                    </button>
-                    {hasAppliedCrop && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          pushHistorySnapshot();
-                          setAppliedCropOverride(null);
-                          setDraftCropRect({ left: 0, top: 0, width: 100, height: 100 });
-                        }}
-                        className="px-4 py-2 text-[9px] font-extrabold uppercase tracking-widest rounded-lg border border-neon-pink/30 bg-neon-pink/10 text-neon-pink hover:bg-neon-pink hover:text-white transition-all"
-                      >
-                        Clear Crop
-                      </button>
-                    )}
-                  </div>
-                </div>
+            </div>
+            <div className="flex items-start gap-3 bg-white/5 p-4 rounded-xl">
+              <ShieldCheck className="text-neon-pink mt-0.5" size={16} />
+              <div>
+                <p className="text-[9px] font-bold uppercase tracking-wider text-white">Production File Ready</p>
+                <p className="text-[8px] text-gray-500 uppercase tracking-widest mt-0.5">Transparent, full-resolution files for future fulfilment.</p>
               </div>
+            </div>
+          </div>
+
+          {restoredVariantIsInvalid && (
+            <div className="rounded-xl border border-amber-400/25 bg-amber-400/10 px-4 py-3 text-[10px] font-bold uppercase tracking-widest text-amber-100">
+              This product option is no longer available. Choose another variant before continuing.
             </div>
           )}
+          {!restoredVariantIsInvalid && !sellableSelection.selection && customization.productId && (
+            <div className="rounded-xl border border-amber-400/25 bg-amber-400/10 px-4 py-3 text-[10px] font-bold uppercase tracking-widest text-amber-100">
+              {describeSellableSelectionReason(sellableSelection.reason) ?? 'This item is not yet available for purchase.'}
+            </div>
+          )}
+          {!customization.productId && (
+            <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-[10px] font-bold uppercase tracking-widest text-gray-400">
+              Preview only — this prop isn't linked to a purchasable product yet.
+            </div>
+          )}
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <span className="text-[10px] text-gray-500 uppercase tracking-widest block">Starting Estimate (VAT inc)</span>
+              <span className="text-4xl font-display font-black text-white">
+                {totalPrice !== null ? `$${totalPrice}` : 'Currently unavailable'}
+              </span>
+            </div>
+            <div className="sm:text-right">
+              <span className="text-[8px] text-neon-blue uppercase font-bold tracking-widest bg-neon-blue/10 px-2 py-1 rounded">
+                {quantity > 1 ? `${quantity} items synced` : 'Single Run Item'}
+              </span>
+            </div>
+          </div>
 
-          <div className="glass-card p-6 border-white/5 text-center flex-col items-center justify-center hidden sm:flex">
-             <span className="inline-block w-2.5 h-2.5 rounded-full bg-emerald-500 animate-ping mb-3" />
-             <p className="text-xs uppercase tracking-wider font-bold text-white mb-1">Generated by you. Printed for you.</p>
-             <p className="text-[10px] text-gray-500 uppercase tracking-widest">Turn your customized neural idea into premium wearable and wall-ready art.</p>
-          </div>
-          </div>
+          <button
+            onClick={handleGenerateRealisticPreview}
+            disabled={showPreviewLoading || !activePartHasImage}
+            title={activePartHasImage ? undefined : 'Add a design to this part first'}
+            className={cn(
+              "w-full flex items-center justify-center gap-3 px-8 py-4 rounded-full font-bold uppercase tracking-widest text-xs transition-all duration-300 border-2",
+              showPreviewLoading || !activePartHasImage
+                ? "border-cyber-gray text-gray-500 cursor-not-allowed"
+                : "border-neon-pink text-neon-pink hover:bg-neon-pink/10 hover:shadow-neon-pink"
+            )}
+          >
+            <Maximize2 size={16} />
+            Generate Realistic Preview
+          </button>
+          <button
+            onClick={handleConfirmAddToCart}
+            disabled={isAdding || isSuccess || !sellableSelection.selection}
+            title={sellableSelection.selection ? undefined : describeSellableSelectionReason(sellableSelection.reason) ?? undefined}
+            className={cn(
+              "w-full flex items-center justify-center gap-3 py-4 text-xs font-black uppercase tracking-widest text-cyber-black bg-white hover:bg-neon-blue hover:text-white rounded-xl transition-all duration-300",
+              isSuccess && "bg-neon-pink text-white neon-glow-pink",
+              !sellableSelection.selection && !isSuccess && "opacity-40 cursor-not-allowed hover:bg-white hover:text-cyber-black"
+            )}
+          >
+            {isAdding ? (
+               <>
+                 <span className="w-4 h-4 border-2 border-cyber-black border-t-transparent rounded-full animate-spin" />
+                 Injecting into Cart Server...
+               </>
+            ) : isSuccess ? (
+               <>
+                 <Check size={16} />
+                 Saved in Cart!
+               </>
+            ) : (
+               <>
+                 <ShoppingBag size={16} />
+                 Save customized item to cart
+               </>
+            )}
+          </button>
         </section>
 
-        {/* Configurations Forms sidebar */}
-        <section className="flex flex-col h-full justify-between">
-          <div>
-            <span className="text-[10px] font-mono tracking-[0.4em] text-neon-blue uppercase mb-2 block">
-              Configuration Module
-            </span>
-            <h1 className="text-3xl sm:text-4xl font-display font-black uppercase tracking-widest text-white mb-4">
-              {customization.productType} Setup
-            </h1>
+        <aside className="hidden lg:block lg:w-[380px] shrink-0 space-y-6 pb-8">
 
-            <div className="mb-6 flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-4">
-              <input
-                type="text"
-                value={projectName}
-                onChange={(event) => setProjectName(event.target.value)}
-                placeholder="Untitled Design"
-                aria-label="Design project name"
-                className="w-full sm:max-w-xs rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm font-bold text-white placeholder:text-gray-500 focus:outline-none focus:border-neon-blue"
-              />
-              <div className="flex items-center gap-2 text-[9px] font-bold uppercase tracking-widest">
-                {saveStatus === 'saving' && (
-                  <span className="inline-flex items-center gap-1.5 text-gray-400">
-                    <Loader2 size={12} className="animate-spin" /> Saving…
-                  </span>
-                )}
-                {saveStatus === 'saved' && (
-                  <span className="inline-flex items-center gap-1.5 text-emerald-400">
-                    <Check size={12} /> Saved
-                  </span>
-                )}
-                {saveStatus === 'dirty' && (
-                  <span className="inline-flex items-center gap-1.5 text-neon-blue">
-                    <span className="h-1.5 w-1.5 rounded-full bg-neon-blue" /> Unsaved changes
-                  </span>
-                )}
-                {saveStatus === 'error' && (
-                  <span className="inline-flex items-center gap-1.5 text-neon-pink" title={saveError || undefined}>
-                    <AlertCircle size={12} /> Save failed
-                  </span>
-                )}
-                <button
-                  type="button"
-                  onClick={() => void handleSaveDesign()}
-                  disabled={saveStatus === 'saving'}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-gray-300 transition-all hover:border-neon-blue hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  <Save size={12} /> Save Design
-                </button>
-              </div>
-            </div>
+            <input
+              type="text"
+              value={projectName}
+              onChange={(event) => setProjectName(event.target.value)}
+              placeholder="Untitled Design"
+              aria-label="Design project name"
+              className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm font-bold text-white placeholder:text-gray-500 focus:outline-none focus:border-neon-blue"
+            />
 
             {isLoadingProject && (
               <div className="mb-6 rounded-xl border border-neon-blue/20 bg-neon-blue/5 px-4 py-3 text-[10px] uppercase tracking-widest text-neon-blue">
@@ -3307,561 +3205,183 @@ export function Customization() {
               )}
             </div>
 
-            <div className="flex space-x-2 border-b border-white/10 mb-2">
-              <button
-                className={cn("px-4 py-3 text-[10px] font-bold uppercase tracking-widest border-b-2 transition-all", activeTab === 'design' ? "border-neon-blue text-neon-blue" : "border-transparent text-gray-400 hover:text-white")}
-                onClick={() => setActiveTab('design')}
-              >
-                Design & Options
-              </button>
-              <button
-                className={cn("px-4 py-3 text-[10px] font-bold uppercase tracking-widest border-b-2 transition-all flex items-center gap-2", activeTab === 'text' ? "border-neon-pink text-neon-pink" : "border-transparent text-gray-400 hover:text-white")}
-                onClick={() => setActiveTab('text')}
-              >
-                <Type size={14} /> Add Text
-              </button>
-            </div>
-
-            <div className="space-y-6 sm:space-y-8 py-6 sm:py-8">
-              {activeTab === 'design' && (
-                <>
-                  {imageQualityWarnings.length > 0 && (
-                    <div className="space-y-2 rounded-2xl border border-amber-400/30 bg-amber-400/5 p-4">
-                      {imageQualityWarnings.map((warning) => (
-                        <div key={warning} className="flex items-start gap-2 text-[10px] uppercase tracking-wide text-amber-300">
-                          <AlertCircle size={14} className="mt-0.5 shrink-0" />
-                          <span className="normal-case tracking-normal">{warning}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                  {customization.basePlacement && (
-                <div className="hidden lg:block space-y-5 sm:space-y-6 border-b border-white/5 pb-6 sm:pb-8">
-                  <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-                    <label className="flex items-center gap-2 text-[8px] font-bold text-gray-400 uppercase tracking-[0.3em] mb-3">
-                      <Move size={12} />
-                      Direct Placement
-                    </label>
-                    <p className="text-[10px] uppercase tracking-widest text-gray-500 leading-relaxed">
-                      Drag the print box on the preview to reposition the design. Use the pink corner handle to resize it live.
-                    </p>
-                  </div>
-
-                  <div>
-                    <label className="flex items-center gap-2 text-[8px] font-bold text-gray-400 uppercase tracking-[0.3em] mb-3">
-                      <Sparkles size={12} />
-                      Corner Radius
-                    </label>
-                    <div className="flex items-center justify-between text-[9px] uppercase tracking-widest text-gray-500 mb-2">
-                      <span>Rounded Corners</span>
-                      <span>{cornerRadius}px</span>
-                    </div>
-                    <input
-                      type="range"
-                      min={0}
-                      max={120}
-                      step={2}
-                      value={cornerRadius}
-                      onPointerDown={beginContinuousEdit}
-                      onChange={(event) => {
-                        beginContinuousEdit();
-                        setCornerRadius(Number(event.target.value));
-                      }}
-                      onPointerUp={endContinuousEdit}
-                      className="w-full accent-[var(--color-neon-blue)]"
-                    />
-                  </div>
-
-                  <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-                    <div className="flex flex-col items-start gap-4 sm:flex-row sm:items-center sm:justify-between">
-                      <div>
-                        <label className="flex items-center gap-2 text-[8px] font-bold text-gray-400 uppercase tracking-[0.3em] mb-2">
-                          <Crop size={12} />
-                          Design Crop
-                        </label>
-                        <p className="text-[9px] uppercase tracking-widest text-gray-500">
-                          {hasAppliedCrop
-                            ? `Crop applied • ${Math.round(appliedCropOverride?.width ?? 100)} by ${Math.round(appliedCropOverride?.height ?? 100)}`
-                            : 'Full design is currently visible'}
-                        </p>
-                      </div>
-                      <div className="flex flex-wrap gap-2 justify-start sm:justify-end">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setDraftCropRect(appliedCropOverride ?? { left: 0, top: 0, width: 100, height: 100 });
-                            setIsCropStudioOpen(true);
-                          }}
-                          className="px-4 py-2 text-[9px] font-extrabold uppercase tracking-widest rounded-lg border border-white/10 bg-white/5 text-gray-300 hover:text-white hover:border-white/20 transition-all"
-                        >
-                          {hasAppliedCrop ? 'Edit Crop' : 'Open Crop Studio'}
-                        </button>
-                        {hasAppliedCrop && (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setAppliedCropOverride(null);
-                              setDraftCropRect({ left: 0, top: 0, width: 100, height: 100 });
-                            }}
-                            className="px-4 py-2 text-[9px] font-extrabold uppercase tracking-widest rounded-lg border border-neon-pink/30 bg-neon-pink/10 text-neon-pink hover:bg-neon-pink hover:text-white transition-all"
-                          >
-                            Clear Crop
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      pushHistorySnapshot();
-                      setPlacementDraft(
-                        customization.basePlacement
-                          ? {
-                              x: customization.basePlacement.x,
-                              y: customization.basePlacement.y,
-                              width: customization.basePlacement.width,
-                              height: customization.basePlacement.height,
-                            }
-                          : null
-                      );
-                      setCornerRadius(0);
-                      setAppliedCropOverride(null);
-                      setDraftCropRect({ left: 0, top: 0, width: 100, height: 100 });
-                    }}
-                    className="w-full sm:w-auto px-4 py-2.5 text-[9px] font-extrabold uppercase tracking-widest rounded-lg border border-white/10 bg-white/5 text-gray-300 hover:text-white hover:border-white/20 transition-all"
-                  >
-                    Reset Placement
-                  </button>
-                </div>
-              )}
-
-              {/* Change Product Colours if available */}
-              {customization.colours && customization.colours.length > 0 && (
-                <div>
-                  <label className="block text-[8px] font-bold text-gray-400 uppercase tracking-[0.3em] mb-3">
-                    Select Product Shade
-                  </label>
-                  <div className="flex flex-wrap gap-3">
-                    {customization.colours.map((colour) => {
-                      const { disabled, reason } = describeOptionSellability('colour', colour);
-                      return (
-                        <button
-                          key={colour}
-                          disabled={disabled}
-                          title={reason ?? undefined}
-                          onClick={() => {
-                            if (disabled || colour === selectedColour) return;
-                            pushHistorySnapshot();
-                            setSelectedColour(colour);
-                          }}
-                          className={cn(
-                            "px-4 py-2 text-[9px] font-extrabold uppercase tracking-widest rounded-lg border transition-all",
-                            disabled
-                              ? "bg-white/5 border-white/5 text-gray-600 cursor-not-allowed opacity-50"
-                              : selectedColour === colour
-                                ? "bg-white text-cyber-black border-white"
-                                : "bg-white/5 border-white/10 text-gray-400 hover:text-white"
-                          )}
-                        >
-                          {colour}
-                          {reason && <span className="ml-1.5 normal-case font-normal text-[8px] opacity-75">({reason})</span>}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-
-              {/* Selection Sizes if available */}
-              {customization.sizes && customization.sizes.length > 0 && (
-                <div>
-                  <label className="block text-[8px] font-bold text-gray-400 uppercase tracking-[0.3em] mb-3">
-                    Choose Dimensions / Size
-                  </label>
-                  <div className="flex flex-wrap gap-3">
-                    {customization.sizes.map((size) => {
-                      const { disabled, reason } = describeOptionSellability('size', size);
-                      return (
-                        <button
-                          key={size}
-                          disabled={disabled}
-                          title={reason ?? undefined}
-                          onClick={() => {
-                            if (disabled || size === selectedSize) return;
-                            pushHistorySnapshot();
-                            setSelectedSize(size);
-                          }}
-                          className={cn(
-                            "px-4 py-2.5 text-[9px] font-extrabold uppercase tracking-widest rounded-lg border transition-all",
-                            disabled
-                              ? "bg-white/5 border-white/5 text-gray-600 cursor-not-allowed opacity-50"
-                              : selectedSize === size
-                                ? "bg-neon-purple text-white border-neon-purple neon-glow-purple"
-                                : "bg-white/5 border-white/10 text-gray-400 hover:text-white"
-                          )}
-                        >
-                          {size}
-                          {reason && <span className="ml-1.5 normal-case font-normal text-[8px] opacity-75">({reason})</span>}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-
-              {/* Quantity Selector Selector */}
-              <div>
-                <label className="block text-[8px] font-bold text-gray-400 uppercase tracking-[0.3em] mb-3">
-                  Production Quantity
-                </label>
-                  <div className="inline-flex items-center gap-3 bg-white/5 border border-white/10 rounded-xl p-1.5">
-                  <button 
-                    onClick={() => setQuantity(q => Math.max(1, q - 1))}
-                    className="w-10 h-10 rounded-lg hover:bg-white/5 text-lg font-bold flex items-center justify-center transition-colors"
-                  >
-                    -
-                  </button>
-                  <span className="w-12 text-center text-sm font-mono font-bold">{quantity}</span>
-                  <button 
-                    onClick={() => setQuantity(q => q + 1)}
-                    className="w-10 h-10 rounded-lg hover:bg-white/5 text-lg font-bold flex items-center justify-center transition-colors"
-                  >
-                    +
-                  </button>
-                </div>
-              </div>
-            </>
-            )}
-
-            {activeTab === 'text' && (
-              <div className="space-y-6 border-b border-white/5 pb-6 sm:pb-8">
-                <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-                  <p className="text-[10px] uppercase tracking-widest text-gray-500 leading-relaxed mb-4">
-                    Add custom text layers. Drag the text on the preview to reposition.
-                  </p>
-                  <button
-                    type="button"
-                    onClick={addTextLayer}
-                    className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-white/10 hover:bg-white/20 border border-white/10 hover:border-white/30 text-white font-bold text-[10px] uppercase tracking-widest rounded-xl transition-all"
-                  >
-                    <Type size={14} /> Add New Text Block
-                  </button>
-                </div>
-
-                {textElements.length > 0 && (
-                  <div className="space-y-4">
-                    {textElements.map(textEl => (
-                      <div
-                        key={textEl.id}
-                        className={cn(
-                          "rounded-2xl border bg-white/5 p-4 transition-all",
-                          activeTextId === textEl.id ? "border-neon-pink" : "border-white/10",
-                          textEl.isHidden && "opacity-50"
-                        )}
-                      >
-                        <div className="flex items-center justify-between mb-4 gap-2">
-                          <input
-                            type="text"
-                            value={textEl.layerName ?? ''}
-                            onFocus={() => {
-                              setActiveTextId(textEl.id);
-                              beginContinuousEdit();
-                            }}
-                            onChange={(e) => renameTextLayer(textEl.id, e.target.value)}
-                            onBlur={endContinuousEdit}
-                            className="bg-transparent border-b border-white/20 text-white focus:outline-none focus:border-neon-pink text-sm w-full mr-2 min-w-0"
-                            placeholder={textEl.text.slice(0, 24) || 'Text layer'}
-                          />
-                          <div className="flex items-center gap-1 shrink-0">
-                            <button
-                              type="button"
-                              onClick={() => toggleTextLayerLock(textEl.id)}
-                              className={cn("p-1.5 rounded transition-colors", textEl.isLocked ? "text-neon-blue" : "text-gray-500 hover:text-white")}
-                              title={textEl.isLocked ? "Unlock layer" : "Lock layer (prevents dragging on the preview)"}
-                            >
-                              {textEl.isLocked ? <Lock size={13} /> : <Unlock size={13} />}
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => toggleTextLayerVisibility(textEl.id)}
-                              className={cn("p-1.5 rounded transition-colors", textEl.isHidden ? "text-neon-pink" : "text-gray-500 hover:text-white")}
-                              title={textEl.isHidden ? "Show layer" : "Hide layer (kept, just not shown or printed)"}
-                            >
-                              {textEl.isHidden ? <EyeOff size={13} /> : <Eye size={13} />}
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => duplicateTextLayer(textEl.id)}
-                              className="p-1.5 rounded text-gray-500 hover:text-white transition-colors"
-                              title="Duplicate layer"
-                            >
-                              <CopyIcon size={13} />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => moveTextLayerUp(textEl.id)}
-                              className="text-gray-500 hover:text-white transition-colors text-xs font-bold uppercase tracking-widest px-1.5"
-                              title="Move Layer Forward"
-                            >
-                              Up
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => moveTextLayerDown(textEl.id)}
-                              className="text-gray-500 hover:text-white transition-colors text-xs font-bold uppercase tracking-widest px-1.5"
-                              title="Move Layer Backward"
-                            >
-                              Down
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => deleteTextLayer(textEl.id)}
-                              className="text-gray-500 hover:text-neon-pink transition-colors text-xs font-bold uppercase tracking-widest pl-1.5"
-                            >
-                              Remove
-                            </button>
-                          </div>
-                        </div>
-                        {activeTextId === textEl.id && (
-                          <div className="space-y-4 pt-4 border-t border-white/10">
-                            <div>
-                              <label className="block text-[8px] font-bold text-gray-400 uppercase tracking-[0.3em] mb-2">Text</label>
-                              <textarea
-                                value={textEl.text}
-                                onFocus={beginContinuousEdit}
-                                onChange={(e) => updateTextLayer(textEl.id, { text: e.target.value }, { recordHistory: false })}
-                                onBlur={endContinuousEdit}
-                                rows={2}
-                                className="w-full resize-y bg-cyber-black border border-white/20 text-white text-sm p-2 rounded outline-none focus:border-neon-pink"
-                                placeholder="Type here... (use a new line for multi-line text)"
-                              />
-                            </div>
-                            <div>
-                              <label className="block text-[8px] font-bold text-gray-400 uppercase tracking-[0.3em] mb-2">Font Size</label>
-                              <input
-                                type="range"
-                                min={12}
-                                max={200}
-                                value={textEl.fontSize}
-                                onPointerDown={beginContinuousEdit}
-                                onChange={(e) => updateTextLayer(textEl.id, { fontSize: Number(e.target.value) }, { recordHistory: false })}
-                                onPointerUp={endContinuousEdit}
-                                className="w-full accent-[var(--color-neon-pink)]"
-                              />
-                            </div>
-                            <div>
-                              <label className="block text-[8px] font-bold text-gray-400 uppercase tracking-[0.3em] mb-2">Rotation</label>
-                              <input
-                                type="range"
-                                min={-180}
-                                max={180}
-                                value={textEl.rotation || 0}
-                                onPointerDown={beginContinuousEdit}
-                                onChange={(e) => updateTextLayer(textEl.id, { rotation: Number(e.target.value) }, { recordHistory: false })}
-                                onPointerUp={endContinuousEdit}
-                                className="w-full accent-[var(--color-neon-pink)]"
-                              />
-                            </div>
-                            <div>
-                              <label className="block text-[8px] font-bold text-gray-400 uppercase tracking-[0.3em] mb-2">Letter Spacing</label>
-                              <input
-                                type="range"
-                                min={-20}
-                                max={100}
-                                value={textEl.letterSpacing || 0}
-                                onPointerDown={beginContinuousEdit}
-                                onChange={(e) => updateTextLayer(textEl.id, { letterSpacing: Number(e.target.value) }, { recordHistory: false })}
-                                onPointerUp={endContinuousEdit}
-                                className="w-full accent-[var(--color-neon-pink)]"
-                              />
-                            </div>
-                            <div>
-                              <label className="block text-[8px] font-bold text-gray-400 uppercase tracking-[0.3em] mb-2">Line Spacing</label>
-                              <input
-                                type="range"
-                                min={0.8}
-                                max={2.5}
-                                step={0.1}
-                                value={textEl.lineHeight ?? 1.2}
-                                onPointerDown={beginContinuousEdit}
-                                onChange={(e) => updateTextLayer(textEl.id, { lineHeight: Number(e.target.value) }, { recordHistory: false })}
-                                onPointerUp={endContinuousEdit}
-                                className="w-full accent-[var(--color-neon-pink)]"
-                              />
-                            </div>
-                            <div>
-                              <label className="block text-[8px] font-bold text-gray-400 uppercase tracking-[0.3em] mb-2">Alignment</label>
-                              <div className="flex gap-2">
-                                {(['left', 'center', 'right'] as const).map((align) => (
-                                  <button
-                                    key={align}
-                                    type="button"
-                                    onClick={() => updateTextLayer(textEl.id, { textAlign: align })}
-                                    className={cn(
-                                      "flex-1 px-3 py-1.5 rounded border text-[9px] font-bold uppercase tracking-widest transition-colors",
-                                      (textEl.textAlign ?? 'center') === align
-                                        ? "bg-neon-blue text-cyber-black border-neon-blue"
-                                        : "bg-transparent text-gray-400 border-white/20 hover:border-white/50"
-                                    )}
-                                  >
-                                    {align}
-                                  </button>
-                                ))}
-                              </div>
-                            </div>
-                            <div className="grid grid-cols-2 gap-4">
-                              <div>
-                                <label className="block text-[8px] font-bold text-gray-400 uppercase tracking-[0.3em] mb-2">Color</label>
-                                <input
-                                  type="color"
-                                  value={textEl.color}
-                                  onFocus={beginContinuousEdit}
-                                  onChange={(e) => updateTextLayer(textEl.id, { color: e.target.value }, { recordHistory: false })}
-                                  onBlur={endContinuousEdit}
-                                  className="w-full h-8 rounded bg-transparent cursor-pointer"
-                                />
-                              </div>
-                              <div>
-                                <label className="block text-[8px] font-bold text-gray-400 uppercase tracking-[0.3em] mb-2">Font</label>
-                                <select
-                                  value={textEl.fontFamily}
-                                  onChange={(e) => updateTextLayer(textEl.id, { fontFamily: e.target.value })}
-                                  className="w-full bg-cyber-black border border-white/20 text-white text-xs p-1.5 rounded outline-none focus:border-neon-pink"
-                                  style={{ fontFamily: textEl.fontFamily }}
-                                >
-                                  <option value="Roboto" style={{ fontFamily: 'Roboto' }}>Roboto</option>
-                                  <option value="Impact" style={{ fontFamily: 'Impact' }}>Impact</option>
-                                  <option value="Pacifico" style={{ fontFamily: 'Pacifico' }}>Pacifico</option>
-                                  <option value="Orbitron" style={{ fontFamily: 'Orbitron' }}>Orbitron</option>
-                                  <option value="Rajdhani" style={{ fontFamily: 'Rajdhani' }}>Rajdhani</option>
-                                  <option value="Audiowide" style={{ fontFamily: 'Audiowide' }}>Audiowide</option>
-                                </select>
-                              </div>
-                            </div>
-                            <div className="flex items-center gap-4 mt-2">
-                              <button
-                                type="button"
-                                onClick={() => updateTextLayer(textEl.id, { isBold: !textEl.isBold })}
-                                className={cn("px-3 py-1.5 rounded border text-xs font-bold transition-colors", textEl.isBold ? "bg-neon-blue text-cyber-black border-neon-blue" : "bg-transparent text-gray-400 border-white/20 hover:border-white/50")}
-                              >
-                                BOLD
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => updateTextLayer(textEl.id, { isItalic: !textEl.isItalic })}
-                                className={cn("px-3 py-1.5 rounded border text-xs italic transition-colors", textEl.isItalic ? "bg-neon-pink text-white border-neon-pink" : "bg-transparent text-gray-400 border-white/20 hover:border-white/50")}
-                              >
-                                ITALIC
-                              </button>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-            </div>
-
-            {/* Production readiness notes — deliberately no shipping/refund promises here.
-                Real checkout, shipping and fulfilment aren't built yet (see CartPage.tsx). */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pb-8 border-b border-white/5">
-              <div className="flex items-start gap-3 bg-white/5 p-4 rounded-xl">
-                <Truck className="text-neon-blue mt-0.5" size={16} />
-                <div>
-                  <p className="text-[9px] font-bold uppercase tracking-wider text-white">Shipping Coming Soon</p>
-                  <p className="text-[8px] text-gray-500 uppercase tracking-widest mt-0.5">Shipping and delivery aren't available yet.</p>
-                </div>
-              </div>
-              <div className="flex items-start gap-3 bg-white/5 p-4 rounded-xl">
-                <ShieldCheck className="text-neon-pink mt-0.5" size={16} />
-                <div>
-                  <p className="text-[9px] font-bold uppercase tracking-wider text-white">Production File Ready</p>
-                  <p className="text-[8px] text-gray-500 uppercase tracking-widest mt-0.5">Transparent, full-resolution files for future fulfilment.</p>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div className="pt-6 sm:pt-8">
-            {restoredVariantIsInvalid && (
-              <div className="mb-6 rounded-xl border border-amber-400/25 bg-amber-400/10 px-4 py-3 text-[10px] font-bold uppercase tracking-widest text-amber-100">
-                This product option is no longer available. Choose another variant before continuing.
-              </div>
-            )}
-            {!restoredVariantIsInvalid && !sellableSelection.selection && customization.productId && (
-              <div className="mb-6 rounded-xl border border-amber-400/25 bg-amber-400/10 px-4 py-3 text-[10px] font-bold uppercase tracking-widest text-amber-100">
-                {describeSellableSelectionReason(sellableSelection.reason) ?? 'This item is not yet available for purchase.'}
-              </div>
-            )}
-            {!customization.productId && (
-              <div className="mb-6 rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-[10px] font-bold uppercase tracking-widest text-gray-400">
-                Preview only — this prop isn't linked to a purchasable product yet.
-              </div>
-            )}
-            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between mb-6">
-              <div>
-                <span className="text-[10px] text-gray-500 uppercase tracking-widest block">Starting Estimate (VAT inc)</span>
-                <span className="text-4xl font-display font-black text-white">
-                  {totalPrice !== null ? `$${totalPrice}` : 'Currently unavailable'}
-                </span>
-              </div>
-              <div className="sm:text-right">
-                <span className="text-[8px] text-neon-blue uppercase font-bold tracking-widest bg-neon-blue/10 px-2 py-1 rounded">
-                  {quantity > 1 ? `${quantity} items synced` : 'Single Run Item'}
-                </span>
-              </div>
-            </div>
-
-
-            <button
-              onClick={handleGenerateRealisticPreview}
-              disabled={showPreviewLoading || !activePartHasImage}
-              title={activePartHasImage ? undefined : 'Add a design to this part first'}
-              className={cn(
-                "w-full flex items-center justify-center gap-3 px-8 py-4 mb-4 rounded-full font-bold uppercase tracking-widest text-xs transition-all duration-300 border-2",
-                showPreviewLoading || !activePartHasImage
-                  ? "border-cyber-gray text-gray-500 cursor-not-allowed"
-                  : "border-neon-pink text-neon-pink hover:bg-neon-pink/10 hover:shadow-neon-pink"
-              )}
-            >
-              <Maximize2 size={16} />
-              Generate Realistic Preview
-            </button>
-            <button
-              onClick={handleConfirmAddToCart}
-              disabled={isAdding || isSuccess || !sellableSelection.selection}
-              title={sellableSelection.selection ? undefined : describeSellableSelectionReason(sellableSelection.reason) ?? undefined}
-              className={cn(
-                "w-full flex items-center justify-center gap-3 py-4 text-xs font-black uppercase tracking-widest text-cyber-black bg-white hover:bg-neon-blue hover:text-white rounded-xl transition-all duration-300",
-                isSuccess && "bg-neon-pink text-white neon-glow-pink",
-                !sellableSelection.selection && !isSuccess && "opacity-40 cursor-not-allowed hover:bg-white hover:text-cyber-black"
-              )}
-            >
-              {isAdding ? (
-                 <>
-                   <span className="w-4 h-4 border-2 border-cyber-black border-t-transparent rounded-full animate-spin" />
-                   Injecting into Cart Server...
-                 </>
-              ) : isSuccess ? (
-                 <>
-                   <Check size={16} />
-                   Saved in Cart!
-                 </>
-              ) : (
-                 <>
-                   <ShoppingBag size={16} />
-                   Save customized item to cart
-                 </>
-              )}
-            </button>
-          </div>
-        </section>
-
+          <VariantsAndLayersPanel
+            colours={customization.colours ?? []}
+            selectedColour={selectedColour}
+            onSelectColour={(colour) => {
+              pushHistorySnapshot();
+              setSelectedColour(colour);
+            }}
+            sizes={customization.sizes ?? []}
+            selectedSize={selectedSize}
+            onSelectSize={(size) => {
+              pushHistorySnapshot();
+              setSelectedSize(size);
+            }}
+            describeOptionSellability={describeOptionSellability}
+            activePartImageUrl={activePartImageUrl}
+            activePartHasImage={activePartHasImage}
+            imageQualityWarnings={imageQualityWarnings}
+            onRemoveImage={removeActivePartArtwork}
+            cornerRadius={cornerRadius}
+            onCornerRadiusChange={setCornerRadius}
+            onCornerRadiusPointerDown={beginContinuousEdit}
+            onCornerRadiusPointerUp={endContinuousEdit}
+            hasAppliedCrop={hasAppliedCrop}
+            appliedCropOverride={appliedCropOverride}
+            onOpenCropStudio={() => {
+              setDraftCropRect(appliedCropOverride ?? { left: 0, top: 0, width: 100, height: 100 });
+              setIsCropStudioOpen(true);
+            }}
+            onClearCrop={() => {
+              pushHistorySnapshot();
+              setAppliedCropOverride(null);
+              setDraftCropRect({ left: 0, top: 0, width: 100, height: 100 });
+            }}
+            onResetPlacement={() => {
+              pushHistorySnapshot();
+              setPlacementDraft(
+                customization.basePlacement
+                  ? {
+                      x: customization.basePlacement.x,
+                      y: customization.basePlacement.y,
+                      width: customization.basePlacement.width,
+                      height: customization.basePlacement.height,
+                    }
+                  : null
+              );
+              setPlacementRotationDraft(null);
+              setCornerRadius(0);
+              setAppliedCropOverride(null);
+              setDraftCropRect({ left: 0, top: 0, width: 100, height: 100 });
+            }}
+            textElements={textElements}
+            activeTextId={activeTextId}
+            onAddText={addTextLayer}
+            onSetActiveText={setActiveTextId}
+            onRenameText={renameTextLayer}
+            onToggleLock={toggleTextLayerLock}
+            onToggleVisibility={toggleTextLayerVisibility}
+            onDuplicateText={duplicateTextLayer}
+            onMoveTextUp={moveTextLayerUp}
+            onMoveTextDown={moveTextLayerDown}
+            onDeleteText={deleteTextLayer}
+            onUpdateText={updateTextLayer}
+            beginContinuousEdit={beginContinuousEdit}
+            endContinuousEdit={endContinuousEdit}
+          />
+        </aside>
       </div>
+
+      <EditorSheet
+        isOpen={mobileSheet === 'actions'}
+        onClose={() => setMobileSheet(null)}
+        title="Add Artwork"
+      >
+        <ArtworkActionsMenu
+          layout="list"
+          onOpenGallery={() => {
+            setMobileSheet(null);
+            setIsGallerySelectorOpen(true);
+          }}
+          onUploadClick={() => {
+            setMobileSheet(null);
+            fileInputRef.current?.click();
+          }}
+          isUploading={isUploading}
+          onGenerateAI={() => {
+            setMobileSheet(null);
+            setIsAiPanelOpen(true);
+          }}
+          onAddText={() => {
+            setMobileSheet(null);
+            addTextLayer();
+          }}
+          onRemove={() => {
+            setMobileSheet(null);
+            removeActivePartArtwork();
+          }}
+          canRemove={activePartHasImage}
+        />
+      </EditorSheet>
+
+      <EditorSheet
+        isOpen={mobileSheet === 'variants'}
+        onClose={() => setMobileSheet(null)}
+        title="Variants & Layers"
+      >
+        <VariantsAndLayersPanel
+          colours={customization.colours ?? []}
+          selectedColour={selectedColour}
+          onSelectColour={(colour) => {
+            pushHistorySnapshot();
+            setSelectedColour(colour);
+          }}
+          sizes={customization.sizes ?? []}
+          selectedSize={selectedSize}
+          onSelectSize={(size) => {
+            pushHistorySnapshot();
+            setSelectedSize(size);
+          }}
+          describeOptionSellability={describeOptionSellability}
+          activePartImageUrl={activePartImageUrl}
+          activePartHasImage={activePartHasImage}
+          imageQualityWarnings={imageQualityWarnings}
+          onRemoveImage={removeActivePartArtwork}
+          cornerRadius={cornerRadius}
+          onCornerRadiusChange={setCornerRadius}
+          onCornerRadiusPointerDown={beginContinuousEdit}
+          onCornerRadiusPointerUp={endContinuousEdit}
+          hasAppliedCrop={hasAppliedCrop}
+          appliedCropOverride={appliedCropOverride}
+          onOpenCropStudio={() => {
+            setDraftCropRect(appliedCropOverride ?? { left: 0, top: 0, width: 100, height: 100 });
+            setIsCropStudioOpen(true);
+          }}
+          onClearCrop={() => {
+            pushHistorySnapshot();
+            setAppliedCropOverride(null);
+            setDraftCropRect({ left: 0, top: 0, width: 100, height: 100 });
+          }}
+          onResetPlacement={() => {
+            pushHistorySnapshot();
+            setPlacementDraft(
+              customization.basePlacement
+                ? {
+                    x: customization.basePlacement.x,
+                    y: customization.basePlacement.y,
+                    width: customization.basePlacement.width,
+                    height: customization.basePlacement.height,
+                  }
+                : null
+            );
+            setPlacementRotationDraft(null);
+            setCornerRadius(0);
+            setAppliedCropOverride(null);
+            setDraftCropRect({ left: 0, top: 0, width: 100, height: 100 });
+          }}
+          textElements={textElements}
+          activeTextId={activeTextId}
+          onAddText={addTextLayer}
+          onSetActiveText={setActiveTextId}
+          onRenameText={renameTextLayer}
+          onToggleLock={toggleTextLayerLock}
+          onToggleVisibility={toggleTextLayerVisibility}
+          onDuplicateText={duplicateTextLayer}
+          onMoveTextUp={moveTextLayerUp}
+          onMoveTextDown={moveTextLayerDown}
+          onDeleteText={deleteTextLayer}
+          onUpdateText={updateTextLayer}
+          beginContinuousEdit={beginContinuousEdit}
+          endContinuousEdit={endContinuousEdit}
+        />
+      </EditorSheet>
+
+      <EditorBottomNav
+        onOpenActions={() => setMobileSheet('actions')}
+        onOpenVariants={() => setMobileSheet('variants')}
+        onOpenLayers={() => setMobileSheet('variants')}
+      />
 
       <AnimatePresence>
         {isCropStudioOpen && (

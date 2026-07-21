@@ -4,7 +4,7 @@
  */
 
 import { Suspense, lazy, useEffect, useState, type ComponentType } from 'react';
-import { BrowserRouter as Router, Routes, Route, useLocation } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Outlet, Link, useLocation } from 'react-router-dom';
 import { LogIn, ShieldCheck, Sparkles } from 'lucide-react';
 import { Layout } from './components/Common.tsx';
 import { useAuth } from './context/AuthContext.tsx';
@@ -82,7 +82,15 @@ function ProtectedDreamAccess({ component: Component }: { component: ComponentTy
 
   if (!user) {
     return (
-      <div className="mx-auto flex min-h-[70vh] max-w-4xl items-center justify-center px-6 py-12">
+      <div className="mx-auto flex min-h-[70vh] max-w-4xl flex-col items-center justify-center gap-6 px-6 py-12">
+        {/* /customize* renders this gate outside the global Layout (see LayoutRoute in
+            PageRoutes) — without this, a logged-out visitor landing here has no way back. */}
+        <Link
+          to="/"
+          className="self-start text-[10px] font-bold uppercase tracking-widest text-gray-500 transition-colors hover:text-white"
+        >
+          ← Back to Artverse
+        </Link>
         <div className="glass-card w-full max-w-2xl border-white/10 p-8 text-center sm:p-12">
           <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-full border border-neon-purple/30 bg-neon-purple/15 text-neon-purple">
             <Sparkles size={28} />
@@ -113,11 +121,22 @@ function ProtectedDreamAccess({ component: Component }: { component: ComponentTy
   return <Component />;
 }
 
-function PageRoutes() {
+// The customization editor is a full-screen, distraction-free workspace (like Printify's own
+// product editor) — it deliberately renders outside the global Navbar/Footer chrome that every
+// other route gets via LayoutRoute below.
+function LayoutRoute() {
   return (
     <Layout>
-      <Suspense fallback={<RouteFallback />}>
-        <Routes>
+      <Outlet />
+    </Layout>
+  );
+}
+
+function PageRoutes() {
+  return (
+    <Suspense fallback={<RouteFallback />}>
+      <Routes>
+        <Route element={<LayoutRoute />}>
           <Route path="/" element={<Home />} />
           <Route path="/gallery" element={<Gallery />} />
           <Route path="/videos" element={<Videos />} />
@@ -126,14 +145,14 @@ function PageRoutes() {
           <Route path="/shop" element={<Shop />} />
           <Route path="/favorites" element={<Favorites />} />
           <Route path="/generator" element={<ProtectedDreamAccess component={Generator} />} />
-          <Route path="/customize" element={<ProtectedDreamAccess component={Customization} />} />
-          <Route path="/customize/product/:productId" element={<ProtectedDreamAccess component={Customization} />} />
           <Route path="/saved-designs" element={<ProtectedDreamAccess component={SavedDesigns} />} />
           <Route path="/cart" element={<CartPage />} />
           <Route path="/collections/:collectionId" element={<CollectionDetail />} />
-        </Routes>
-      </Suspense>
-    </Layout>
+        </Route>
+        <Route path="/customize" element={<ProtectedDreamAccess component={Customization} />} />
+        <Route path="/customize/product/:productId" element={<ProtectedDreamAccess component={Customization} />} />
+      </Routes>
+    </Suspense>
   );
 }
 
