@@ -4,8 +4,10 @@ import { X, ChevronLeft, ChevronRight, Share2, Copy, Link as LinkIcon, Twitter, 
 import { useNavigate } from 'react-router-dom';
 import { Navbar, Footer } from './Navigation.tsx';
 import { cn } from '../lib/utils.ts';
-import { getMockupTemplates } from '../lib/api.ts';
-import type { MockupTemplate } from '../types.ts';
+import { getMockupTemplates, getProducts } from '../lib/api.ts';
+import { useCart } from '../context/CartContext.tsx';
+import { validateSellableSelection } from '../lib/sellableSelection.ts';
+import type { ActiveCustomization, MockupTemplate, Product } from '../types.ts';
 
 interface LayoutProps {
   children: ReactNode;
@@ -106,16 +108,72 @@ interface ModalProps {
 
 export function ImageModal({ isOpen, onClose, imageUrl, title, onNext, onPrev, artworkId }: ModalProps) {
   const navigate = useNavigate();
+  const { setActiveCustomization } = useCart();
   const [showPropSelector, setShowPropSelector] = useState(false);
   const [templates, setTemplates] = useState<MockupTemplate[]>([]);
+  const [products, setProducts] = useState<Product[]>([]);
   const [loadingProps, setLoadingProps] = useState(false);
+  const [propsError, setPropsError] = useState<string | null>(null);
 
   useEffect(() => {
     if (showPropSelector) {
       setLoadingProps(true);
-      getMockupTemplates().then(setTemplates).finally(() => setLoadingProps(false));
+      setPropsError(null);
+      Promise.all([getMockupTemplates(), getProducts()])
+        .then(([templateItems, productItems]) => {
+          setTemplates(templateItems);
+          setProducts(productItems);
+        })
+        .catch((error) => {
+          console.error('Failed to load customizable products:', error);
+          setPropsError('Customizable products are temporarily unavailable.');
+        })
+        .finally(() => setLoadingProps(false));
     }
   }, [showPropSelector]);
+
+  const handleTemplateSelect = (template: MockupTemplate) => {
+    const product = products.find((candidate) => candidate.mockupTemplateId === template.id);
+    const defaultVariant = product?.variants?.find((variant) => variant.isAvailable && variant.isSellable);
+    const sellable = validateSellableSelection(product, defaultVariant);
+    if (!sellable.selection || !artworkId) {
+      return;
+    }
+
+    const customization: ActiveCustomization = {
+      artworkId,
+      sourceArtworkId: Number(artworkId),
+      userPrompt: title,
+      imageUrl,
+      templateId: template.id,
+      templateName: template.name,
+      productType: template.productTypeDisplay,
+      productId: Number(sellable.selection.product.id),
+      selectedVariantId: sellable.selection.variant.id,
+      mockupImageUrl: template.baseImage || '',
+      templateBaseImageUrl: template.baseImage,
+      templateMaskImageUrl: template.maskImage,
+      templateShadowLayerUrl: template.shadowLayer,
+      templateHighlightLayerUrl: template.highlightLayer,
+      templateParts: template.parts,
+      startingPrice: sellable.selection.startingPrice,
+      sizes:
+        sellable.selection.product.availableSizes?.length
+          ? sellable.selection.product.availableSizes
+          : [...template.supportedSizes],
+      colours:
+        sellable.selection.product.availableColors?.length
+          ? sellable.selection.product.availableColors
+          : [...template.supportedColors],
+      basePlacement: null,
+      textElements: [],
+      partsConfig: {},
+    };
+
+    setActiveCustomization(customization);
+    onClose();
+    navigate('/customize');
+  };
 
   useEffect(() => {
     if (!isOpen) {
@@ -186,27 +244,45 @@ export function ImageModal({ isOpen, onClose, imageUrl, title, onNext, onPrev, a
                   <h3 className="text-2xl font-display font-bold uppercase tracking-widest text-white mb-8 mt-8">Select a Prop Template</h3>
                   {loadingProps ? (
                     <div className="text-neon-blue uppercase tracking-widest text-xs animate-pulse">Loading templates...</div>
+                  ) : propsError ? (
+                    <div className="text-center text-xs uppercase tracking-widest text-red-300">{propsError}</div>
                   ) : (
                     <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-6 max-w-4xl w-full">
-                      {templates.map(t => (
-                        <button 
-                          key={t.id} 
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onClose();
-                            // Shop.tsx is now a plain product catalogue (no template/design
-                            // pre-selection state) — the customization flow starts from picking
-                            // a real Product there, not a bare template here. See the
-                            // Shop-to-Customization redesign; template_id/artworkId are no
-                            // longer usable as a customize-screen entry point.
-                            navigate('/shop');
-                          }}
-                          className="glass-card p-4 flex flex-col items-center hover:border-neon-blue transition-all group border border-white/10"
-                        >
-                          <img src={t.baseImage} className="w-24 h-24 object-contain mb-4 group-hover:scale-110 transition-transform" />
-                          <span className="text-[10px] uppercase tracking-widest font-bold text-white text-center">{t.productTypeDisplay}</span>
-                        </button>
-                      ))}
+                      {templates.map((template) => {
+                        const hasSellableProduct = products.some(
+                          (product) => product.mockupTemplateId === template.id
+                        );
+                        return (
+                          <button
+                            key={template.id}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              handleTemplateSelect(template);
+                            }}
+                            disabled={!hasSellableProduct}
+                            title={
+                              hasSellableProduct
+                                ? `Customize ${template.productTypeDisplay}`
+                                : 'No sellable product is currently mapped to this template.'
+                            }
+                            className={cn(
+                              'glass-card p-4 flex flex-col items-center transition-all group border border-white/10',
+                              hasSellableProduct
+                                ? 'hover:border-neon-blue'
+                                : 'cursor-not-allowed opacity-40'
+                            )}
+                          >
+                            <img
+                              src={template.baseImage || ''}
+                              alt=""
+                              className="w-24 h-24 object-contain mb-4 group-hover:scale-110 transition-transform"
+                            />
+                            <span className="text-[10px] uppercase tracking-widest font-bold text-white text-center">
+                              {template.productTypeDisplay}
+                            </span>
+                          </button>
+                        );
+                      })}
                     </div>
                   )}
                 </div>
