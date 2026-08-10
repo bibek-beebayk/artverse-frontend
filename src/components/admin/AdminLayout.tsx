@@ -30,6 +30,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
                 <NavLink
                   key={item.path}
                   to={`/admin/${item.path}`}
+                  end={item.end}
                   onClick={onNavigate}
                   className={({ isActive }) =>
                     cn(

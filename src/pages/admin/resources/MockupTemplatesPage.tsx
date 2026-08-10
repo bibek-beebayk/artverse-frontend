@@ -3,13 +3,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState } from "react";
-import { ArrowLeft } from "lucide-react";
+import { useEffect, useState } from "react";
+import { ArrowLeft, CheckCircle2, Loader2, XCircle } from "lucide-react";
 import { AdminResourceTable } from "../../../components/admin/AdminResourceTable.tsx";
 import { AdminResourceForm, type AdminFieldSchema } from "../../../components/admin/AdminResourceForm.tsx";
 import { makeAdminCrud } from "../../../lib/adminApi.ts";
 import { cn } from "../../../lib/utils.ts";
-import { resolveAssetUrl } from "../../../lib/api.ts";
+import { ApiError, resolveAssetUrl } from "../../../lib/api.ts";
 
 interface MockupTemplateRow {
   id: number;
@@ -23,6 +23,7 @@ interface MockupTemplateRow {
   supported_sizes: string[];
   supported_file_formats: string[];
   parts: MockupTemplatePartRow[];
+  selected_print_provider: number | null;
 }
 
 interface MockupTemplatePartRow {
@@ -45,6 +46,26 @@ interface MockupTemplatePartRow {
 
 const templateCrud = makeAdminCrud<MockupTemplateRow>("/generator/admin/mockup-templates");
 const partCrud = makeAdminCrud<MockupTemplatePartRow>("/generator/admin/mockup-template-parts");
+const blueprintCrud = makeAdminCrud<BlueprintRow>("/printify/blueprints");
+
+interface PrintProvider {
+  id: number;
+  provider_id: number;
+  title: string;
+  variant_count: number;
+  available_variant_count: number;
+  supported_placeholders: string[];
+  missing_cost_variant_count: number;
+  synced_at: string;
+}
+
+interface BlueprintRow {
+  id: number;
+  blueprint_id: number;
+  title: string;
+  mockup_template: number | null;
+  print_providers?: PrintProvider[];
+}
 
 // Mirrors the backend's own fallback (apps.generator.serializers.resolve_display_thumbnail_url /
 // apps.shop.serializers._fallback_template_image_url): prefer the 'front' part's photo, else
@@ -136,6 +157,170 @@ const partFormFields: AdminFieldSchema[] = [
   },
 ];
 
+function PrintifyMappingTab({
+  template,
+  onUpdated,
+}: {
+  template: MockupTemplateRow;
+  onUpdated: (template: MockupTemplateRow) => void;
+}) {
+  const [blueprint, setBlueprint] = useState<BlueprintRow | null | "loading">("loading");
+  const [selecting, setSelecting] = useState(false);
+  const [selectedProviderId, setSelectedProviderId] = useState<string>(
+    template.selected_print_provider ? String(template.selected_print_provider) : "",
+  );
+  const [error, setError] = useState<string | null>(null);
+
+  const load = () => {
+    setBlueprint("loading");
+    void blueprintCrud
+      .list({ mockup_template: template.id })
+      .then((result) => (result.results[0] ? blueprintCrud.get(result.results[0].id) : Promise.resolve(null)))
+      .then((detail) => setBlueprint(detail as BlueprintRow | null));
+  };
+
+  useEffect(load, [template.id]);
+  useEffect(() => {
+    setSelectedProviderId(template.selected_print_provider ? String(template.selected_print_provider) : "");
+  }, [template.selected_print_provider]);
+
+  if (blueprint === "loading") {
+    return (
+      <div className="glass-card flex justify-center border-white/10 p-10 text-gray-500">
+        <Loader2 size={18} className="animate-spin" />
+      </div>
+    );
+  }
+
+  if (!blueprint) {
+    return (
+      <div className="glass-card border-white/10 p-6 text-sm text-gray-400">
+        No Printify blueprint is mapped to this template yet. Map one from the Printify → Blueprints
+        page first, then come back here to select a print provider.
+      </div>
+    );
+  }
+
+  const providers = blueprint.print_providers ?? [];
+  const selectedProvider = providers.find((p) => String(p.id) === selectedProviderId) ?? null;
+  const currentProviderStillValid =
+    !template.selected_print_provider || providers.some((p) => p.id === template.selected_print_provider);
+
+  const handleSave = async () => {
+    setSelecting(true);
+    setError(null);
+    try {
+      const updated = await templateCrud.update(template.id, {
+        selected_print_provider: selectedProviderId === "" ? null : Number(selectedProviderId),
+      } as never);
+      onUpdated(updated);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not update the selected provider.");
+    } finally {
+      setSelecting(false);
+    }
+  };
+
+  const optionStyle = { backgroundColor: "#121212", color: "#ffffff" };
+
+  return (
+    <div className="glass-card max-w-3xl border-white/10 p-5">
+      <h2 className="mb-4 text-[10px] font-bold uppercase tracking-[0.25em] text-gray-500">Printify Mapping</h2>
+
+      <dl className="mb-5 grid grid-cols-1 gap-3 text-xs sm:grid-cols-2">
+        <div>
+          <dt className="text-gray-500">Mapped Blueprint</dt>
+          <dd className="font-bold text-white">{blueprint.title}</dd>
+        </div>
+        <div>
+          <dt className="text-gray-500">Provider Variant Count</dt>
+          <dd className="font-bold text-white">{selectedProvider ? selectedProvider.variant_count : "—"}</dd>
+        </div>
+        <div>
+          <dt className="text-gray-500">Supported Placeholders</dt>
+          <dd className="font-bold text-white">
+            {selectedProvider?.supported_placeholders.length ? selectedProvider.supported_placeholders.join(", ") : "—"}
+          </dd>
+        </div>
+        <div>
+          <dt className="text-gray-500">Last Provider Sync</dt>
+          <dd className="font-bold text-white">
+            {selectedProvider ? new Date(selectedProvider.synced_at).toLocaleString() : "—"}
+          </dd>
+        </div>
+      </dl>
+
+      {!currentProviderStillValid && (
+        <div className="mb-4 rounded-xl border border-yellow-400/30 bg-yellow-400/10 px-3 py-2 text-xs text-yellow-400">
+          The previously selected provider no longer belongs to this template's mapped blueprint — select a
+          provider again below.
+        </div>
+      )}
+
+      <div className="mb-4 flex flex-wrap items-end gap-3">
+        <div className="flex-1">
+          <label className="mb-1.5 block text-[10px] font-bold uppercase tracking-widest text-gray-500">
+            Selected Print Provider
+          </label>
+          <select
+            value={selectedProviderId}
+            onChange={(event) => setSelectedProviderId(event.target.value)}
+            className="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2.5 text-sm text-white focus:border-neon-purple/50 focus:outline-none"
+          >
+            <option value="" style={optionStyle}>— None —</option>
+            {providers.map((provider) => (
+              <option key={provider.id} value={provider.id} style={optionStyle}>
+                {provider.title} ({provider.variant_count} variants)
+              </option>
+            ))}
+          </select>
+        </div>
+        <button
+          type="button"
+          onClick={() => void handleSave()}
+          disabled={selecting}
+          className="flex items-center gap-2 rounded-xl bg-white px-5 py-2.5 text-xs font-black uppercase tracking-widest text-cyber-black hover:bg-neon-purple hover:text-white disabled:opacity-60"
+        >
+          {selecting && <Loader2 size={14} className="animate-spin" />}
+          Save Provider
+        </button>
+      </div>
+
+      {error && (
+        <div className="mb-4 rounded-xl border border-neon-pink/30 bg-neon-pink/10 px-3 py-2 text-xs text-neon-pink">{error}</div>
+      )}
+
+      {selectedProvider && (
+        <div>
+          <h3 className="mb-2 text-[10px] font-bold uppercase tracking-widest text-gray-500">Part Compatibility</h3>
+          <div className="flex flex-col gap-1.5">
+            {template.parts.map((part) => {
+              const position = part.printify_placeholder_position || part.name;
+              const supported = selectedProvider.supported_placeholders.includes(position);
+              return (
+                <div key={part.id} className="flex items-center justify-between rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs">
+                  <span className="text-gray-300">
+                    {part.name} <span className="text-gray-600">({position})</span>
+                  </span>
+                  {supported ? (
+                    <span className="flex items-center gap-1.5 text-neon-blue">
+                      <CheckCircle2 size={13} /> Supported
+                    </span>
+                  ) : (
+                    <span className="flex items-center gap-1.5 text-neon-pink">
+                      <XCircle size={13} /> Unsupported
+                    </span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function TemplateDetail({
   template,
   onBack,
@@ -145,7 +330,7 @@ function TemplateDetail({
   onBack: () => void;
   onUpdated: (template: MockupTemplateRow) => void;
 }) {
-  const [tab, setTab] = useState<"details" | "parts">("details");
+  const [tab, setTab] = useState<"details" | "parts" | "printify">("details");
   const [current, setCurrent] = useState(template);
   const [saved, setSaved] = useState(false);
 
@@ -154,6 +339,11 @@ function TemplateDetail({
     setCurrent(updated);
     onUpdated(updated);
     setSaved(true);
+  };
+
+  const handlePrintifyUpdated = (updated: MockupTemplateRow) => {
+    setCurrent(updated);
+    onUpdated(updated);
   };
 
   return (
@@ -174,6 +364,7 @@ function TemplateDetail({
             [
               ["details", "Details"],
               ["parts", "Parts"],
+              ["printify", "Printify Mapping"],
             ] as const
           ).map(([key, label]) => (
             <button
@@ -206,6 +397,8 @@ function TemplateDetail({
             submitLabel="Save Changes"
           />
         </div>
+      ) : tab === "printify" ? (
+        <PrintifyMappingTab template={current} onUpdated={handlePrintifyUpdated} />
       ) : (
         <AdminResourceTable
           title=""

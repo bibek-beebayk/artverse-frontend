@@ -45,6 +45,10 @@ interface AdminResourceTableProps<T extends { id: number | string }> {
   /** "lg" for a form with several image fields and/or the placement editor. Passed straight
    * through to the internal AdminModal. */
   modalSize?: "md" | "lg";
+  /** A full-width row of filter controls (selects, etc.) rendered under the title/search bar —
+   * e.g. Products' category/status/ordering dropdowns. The caller owns the filter state and
+   * feeds it back in via extraListParams; this is purely a layout slot. */
+  filtersNode?: ReactNode;
   /** When provided, the Edit button calls this instead of opening the internal create/edit
    * modal — for a page that shows its own inline detail view rather than a modal (e.g.
    * MockupTemplatesPage, which never nests one AdminModal inside another — see AdminModal.tsx's
@@ -52,6 +56,13 @@ interface AdminResourceTableProps<T extends { id: number | string }> {
    * brand-new row has no detail view to switch to yet.
    */
   onEditRow?: (row: T) => void;
+  /** Renders a checkbox column and a bulk-actions bar above the table whenever at least one row
+   * is selected — for safe, scoped multi-row operations (e.g. Product Variants' Mark Available/
+   * Unavailable/Set Base Cost). Selection is cleared on every reload (page change, filter change,
+   * after an action completes) rather than persisted across pages — a bulk action is only ever
+   * meant to apply to what's currently visible and deliberately checked. */
+  selectable?: boolean;
+  renderBulkActions?: (selectedIds: (number | string)[], helpers: { clearSelection: () => void; refresh: () => void }) => ReactNode;
 }
 
 export function AdminResourceTable<T extends { id: number | string }>({
@@ -69,7 +80,10 @@ export function AdminResourceTable<T extends { id: number | string }>({
   extraListParams,
   extraCreateValues,
   modalSize,
+  filtersNode,
   onEditRow,
+  selectable = false,
+  renderBulkActions,
 }: AdminResourceTableProps<T>) {
   const [rows, setRows] = useState<T[]>([]);
   const [loading, setLoading] = useState(true);
@@ -79,6 +93,7 @@ export function AdminResourceTable<T extends { id: number | string }>({
   const [search, setSearch] = useState("");
   const [modalRow, setModalRow] = useState<T | null | "new">(null);
   const [deletingId, setDeletingId] = useState<number | string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<number | string>>(new Set());
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -91,6 +106,7 @@ export function AdminResourceTable<T extends { id: number | string }>({
       });
       setRows(result.results);
       setTotalPages(result.totalPages || 1);
+      setSelectedIds(new Set());
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to load.");
     } finally {
@@ -105,7 +121,22 @@ export function AdminResourceTable<T extends { id: number | string }>({
 
   useEffect(() => {
     setPage(1);
-  }, [search]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search, JSON.stringify(extraListParams)]);
+
+  const toggleRowSelected = (id: number | string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const allVisibleSelected = rows.length > 0 && rows.every((row) => selectedIds.has(row.id));
+  const toggleSelectAllVisible = () => {
+    setSelectedIds(allVisibleSelected ? new Set() : new Set(rows.map((row) => row.id)));
+  };
 
   const handleDelete = async (id: number | string) => {
     if (!window.confirm("Delete this item? This cannot be undone.")) return;
@@ -170,11 +201,33 @@ export function AdminResourceTable<T extends { id: number | string }>({
         </div>
       </div>
 
+      {filtersNode && <div className="mb-4">{filtersNode}</div>}
+
+      {selectable && selectedIds.size > 0 && renderBulkActions && (
+        <div className="mb-4 flex flex-wrap items-center gap-3 rounded-xl border border-neon-purple/30 bg-neon-purple/10 px-4 py-3">
+          <span className="text-[10px] font-black uppercase tracking-widest text-white">
+            {selectedIds.size} selected
+          </span>
+          {renderBulkActions(Array.from(selectedIds), { clearSelection: () => setSelectedIds(new Set()), refresh: load })}
+        </div>
+      )}
+
       <div className="glass-card overflow-hidden border-white/10 p-0">
         <div className="overflow-x-auto">
           <table className="w-full min-w-160 text-left text-sm">
             <thead>
               <tr className="border-b border-white/10 text-[10px] font-bold uppercase tracking-widest text-gray-500">
+                {selectable && (
+                  <th className="w-10 px-4 py-3">
+                    <input
+                      type="checkbox"
+                      checked={allVisibleSelected}
+                      onChange={toggleSelectAllVisible}
+                      aria-label="Select all visible rows"
+                      className="h-3.5 w-3.5 accent-neon-purple"
+                    />
+                  </th>
+                )}
                 {columns.map((column) => (
                   <th key={column.key} className="px-4 py-3">
                     {column.label}
@@ -186,25 +239,36 @@ export function AdminResourceTable<T extends { id: number | string }>({
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={columns.length + 1} className="px-4 py-10 text-center text-gray-500">
+                  <td colSpan={columns.length + 1 + (selectable ? 1 : 0)} className="px-4 py-10 text-center text-gray-500">
                     <Loader2 size={18} className="mx-auto animate-spin" />
                   </td>
                 </tr>
               ) : error ? (
                 <tr>
-                  <td colSpan={columns.length + 1} className="px-4 py-10 text-center text-neon-pink">
+                  <td colSpan={columns.length + 1 + (selectable ? 1 : 0)} className="px-4 py-10 text-center text-neon-pink">
                     {error}
                   </td>
                 </tr>
               ) : rows.length === 0 ? (
                 <tr>
-                  <td colSpan={columns.length + 1} className="px-4 py-10 text-center text-gray-500">
+                  <td colSpan={columns.length + 1 + (selectable ? 1 : 0)} className="px-4 py-10 text-center text-gray-500">
                     Nothing here yet.
                   </td>
                 </tr>
               ) : (
                 rows.map((row) => (
                   <tr key={row.id} className="border-b border-white/5 text-gray-300 last:border-0 hover:bg-white/3">
+                    {selectable && (
+                      <td className="px-4 py-3">
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.has(row.id)}
+                          onChange={() => toggleRowSelected(row.id)}
+                          aria-label="Select row"
+                          className="h-3.5 w-3.5 accent-neon-purple"
+                        />
+                      </td>
+                    )}
                     {columns.map((column) => (
                       <td key={column.key} className="px-4 py-3">
                         {column.render ? column.render(row) : String((row as Record<string, unknown>)[column.key] ?? "—")}

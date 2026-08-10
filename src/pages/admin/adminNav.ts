@@ -18,6 +18,7 @@ import {
   Heart,
   Image as ImageIcon,
   Images,
+  LayoutDashboard,
   Layers,
   Package,
   Percent,
@@ -37,6 +38,9 @@ export interface AdminNavItem {
   path: string;
   label: string;
   icon: LucideIcon;
+  /** Dashboard only — its path ("") is a prefix of every other admin route, so its NavLink
+   * needs exact (`end`) matching or it would render "active" on every page. */
+  end?: boolean;
 }
 
 export interface AdminNavSection {
@@ -45,6 +49,10 @@ export interface AdminNavSection {
 }
 
 export const ADMIN_NAV: AdminNavSection[] = [
+  {
+    heading: "Overview",
+    items: [{ path: "", label: "Dashboard", icon: LayoutDashboard, end: true }],
+  },
   {
     heading: "Catalog",
     items: [
@@ -103,6 +111,9 @@ export const ADMIN_NAV: AdminNavSection[] = [
   },
 ];
 
+// "" — the Dashboard route. /admin/* itself now renders the Dashboard directly (an <Route index>
+// in AdminApp.tsx, not a redirect into Categories or any other resource) — see ADMIN_NAV's
+// "Overview" section above.
 export const ADMIN_HOME_PATH = ADMIN_NAV[0].items[0].path;
 
 // Printify print providers are only ever shown nested under a blueprint's detail (no standalone

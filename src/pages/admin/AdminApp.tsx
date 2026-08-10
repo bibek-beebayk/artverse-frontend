@@ -6,6 +6,7 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 import { AdminLayout } from "../../components/admin/AdminLayout.tsx";
 import { ADMIN_HOME_PATH } from "./adminNav.ts";
+import { DashboardPage } from "./resources/DashboardPage.tsx";
 import { ProductCategoriesPage } from "./resources/ProductCategoriesPage.tsx";
 import { ProductsPage } from "./resources/ProductsPage.tsx";
 import { MockupTemplatesPage } from "./resources/MockupTemplatesPage.tsx";
@@ -38,7 +39,7 @@ export function AdminApp() {
   return (
     <AdminLayout>
       <Routes>
-        <Route index element={<Navigate to={ADMIN_HOME_PATH} replace />} />
+        <Route index element={<DashboardPage />} />
 
         <Route path="catalog/categories" element={<ProductCategoriesPage />} />
         <Route path="catalog/products" element={<ProductsPage />} />
