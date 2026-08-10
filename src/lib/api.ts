@@ -180,17 +180,12 @@ interface BackendMockupTemplate {
   product_type_display: string;
   description: string;
   is_active: boolean;
-  base_image: string | null;
-  mask_image: string | null;
-  shadow_layer: string | null;
-  highlight_layer: string | null;
   template_version: number;
-  config: Record<string, unknown>;
   supported_colors: string[];
   supported_sizes: string[];
-  canvas_width: number | null;
-  canvas_height: number | null;
   supported_file_formats: string[];
+  // No base_image/mask_image/shadow_layer/highlight_layer/config/canvas_width/canvas_height
+  // here anymore — see MockupTemplateSerializer's docstring on the backend.
   parts?: BackendMockupTemplatePart[];
   // No `variants` here on purpose — see MockupTemplateSerializer's docstring on the backend.
   updated_at: string;
@@ -244,6 +239,7 @@ export interface BackendAuthenticatedUser {
   avatar: string;
   is_artist: boolean;
   is_staff: boolean;
+  is_superuser: boolean;
 }
 
 interface GoogleLoginResponse {
@@ -313,7 +309,7 @@ function getApiOrigin() {
   }
 }
 
-function resolveAssetUrl(url: string | null | undefined) {
+export function resolveAssetUrl(url: string | null | undefined) {
   if (!url) {
     return "";
   }
@@ -372,7 +368,7 @@ async function refreshBackendAccessToken() {
   return data.access;
 }
 
-async function requestJson<T>(path: string, init?: RequestInit, retryOn401 = true): Promise<T> {
+export async function requestJson<T>(path: string, init?: RequestInit, retryOn401 = true): Promise<T> {
   const headers = new Headers(init?.headers);
   // A FormData body (file uploads) must NOT get a manually-set Content-Type — fetch/the browser
   // sets `multipart/form-data; boundary=...` automatically, and a boundary-less
@@ -585,16 +581,9 @@ function mapMockupTemplate(template: BackendMockupTemplate): MockupTemplate {
     productTypeDisplay: template.product_type_display,
     description: template.description,
     isActive: template.is_active,
-    baseImage: resolveAssetUrl(template.base_image),
-    maskImage: resolveAssetUrl(template.mask_image),
-    shadowLayer: resolveAssetUrl(template.shadow_layer),
-    highlightLayer: resolveAssetUrl(template.highlight_layer),
     templateVersion: template.template_version,
-    config: template.config,
     supportedColors: template.supported_colors,
     supportedSizes: template.supported_sizes,
-    canvasWidth: template.canvas_width,
-    canvasHeight: template.canvas_height,
     supportedFileFormats: template.supported_file_formats,
     parts: (template.parts || []).map(mapMockupTemplatePart),
     updatedAt: template.updated_at,

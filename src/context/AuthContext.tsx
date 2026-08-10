@@ -21,6 +21,7 @@ interface AuthContextType {
   favorites: string[];
   authError: string | null;
   isStaff: boolean;
+  isSuperuser: boolean;
   isFavorited: (id: string) => boolean;
   toggleFavorite: (artwork: { id: string, title: string, imageUrl: string }) => Promise<boolean>;
   signIn: () => Promise<void>;
@@ -39,6 +40,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // the backend login/session-resync response, which fires on every onAuthStateChanged (i.e.
   // every page load with a persisted Firebase session), so this stays fresh without extra polling.
   const [isStaff, setIsStaff] = useState(false);
+  // Django's is_superuser — gates the custom admin management panel (/admin/*), deliberately
+  // stricter than isStaff above (which only gates the customization editor's dev-tools panel).
+  const [isSuperuser, setIsSuperuser] = useState(false);
 
   const clearAuthError = () => setAuthError(null);
 
@@ -85,12 +89,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setAuthError(null);
           const backendUser = await syncBackendGoogleSession();
           setIsStaff(backendUser.is_staff === true);
+          setIsSuperuser(backendUser.is_superuser === true);
         } catch (error) {
           console.error('Backend session sync error:', error);
           setAuthError(mapAuthError(error));
           clearBackendAuthTokens();
           setFavorites([]);
           setIsStaff(false);
+          setIsSuperuser(false);
           setUser(null);
           await logout().catch(() => undefined);
           setLoading(false);
@@ -125,6 +131,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       } else {
         setFavorites([]);
         setIsStaff(false);
+        setIsSuperuser(false);
         clearBackendAuthTokens();
       }
 
@@ -175,6 +182,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       clearBackendAuthTokens();
       setFavorites([]);
       setIsStaff(false);
+      setIsSuperuser(false);
       setUser(null);
       await logout().catch(() => undefined);
     }
@@ -219,6 +227,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       favorites,
       authError,
       isStaff,
+      isSuperuser,
       isFavorited,
       toggleFavorite,
       signIn,

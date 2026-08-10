@@ -311,17 +311,14 @@ export interface MockupTemplate {
   productTypeDisplay: string;
   description: string;
   isActive: boolean;
-  baseImage: string | null;
-  maskImage: string | null;
-  shadowLayer: string | null;
-  highlightLayer: string | null;
   templateVersion: number;
-  config: Record<string, unknown>;
   supportedColors: string[];
   supportedSizes: string[];
-  canvasWidth?: number | null;
-  canvasHeight?: number | null;
   supportedFileFormats?: string[];
+  // No baseImage/maskImage/shadowLayer/highlightLayer/config/canvasWidth/canvasHeight here
+  // anymore — a template can no longer bypass Parts with a "root" image; every renderable
+  // surface is a MockupTemplatePart (below), and an active template always has >= 1 (enforced
+  // server-side).
   parts?: MockupTemplatePart[];
   // Deliberately no `variants` here — the backend no longer embeds every variant on the
   // template (payload-size fix). Fetch variants for a specific product/template via

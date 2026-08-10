@@ -7,6 +7,7 @@ import { cn } from '../lib/utils.ts';
 import { getMockupTemplates, getProducts } from '../lib/api.ts';
 import { useCart } from '../context/CartContext.tsx';
 import { validateSellableSelection } from '../lib/sellableSelection.ts';
+import { frontTemplatePart } from '../lib/designProjectMapping.ts';
 import type { ActiveCustomization, MockupTemplate, Product } from '../types.ts';
 
 interface LayoutProps {
@@ -140,6 +141,8 @@ export function ImageModal({ isOpen, onClose, imageUrl, title, onNext, onPrev, a
       return;
     }
 
+    const templateFrontPart = frontTemplatePart(template);
+
     const customization: ActiveCustomization = {
       artworkId,
       sourceArtworkId: Number(artworkId),
@@ -150,11 +153,11 @@ export function ImageModal({ isOpen, onClose, imageUrl, title, onNext, onPrev, a
       productType: template.productTypeDisplay,
       productId: Number(sellable.selection.product.id),
       selectedVariantId: sellable.selection.variant.id,
-      mockupImageUrl: template.baseImage || '',
-      templateBaseImageUrl: template.baseImage,
-      templateMaskImageUrl: template.maskImage,
-      templateShadowLayerUrl: template.shadowLayer,
-      templateHighlightLayerUrl: template.highlightLayer,
+      mockupImageUrl: templateFrontPart?.baseImage || '',
+      templateBaseImageUrl: templateFrontPart?.baseImage ?? null,
+      templateMaskImageUrl: templateFrontPart?.maskImage ?? null,
+      templateShadowLayerUrl: templateFrontPart?.shadowLayer ?? null,
+      templateHighlightLayerUrl: templateFrontPart?.highlightLayer ?? null,
       templateParts: template.parts,
       startingPrice: sellable.selection.startingPrice,
       sizes:
@@ -273,7 +276,7 @@ export function ImageModal({ isOpen, onClose, imageUrl, title, onNext, onPrev, a
                             )}
                           >
                             <img
-                              src={template.baseImage || ''}
+                              src={frontTemplatePart(template)?.baseImage || ''}
                               alt=""
                               className="w-24 h-24 object-contain mb-4 group-hover:scale-110 transition-transform"
                             />

@@ -47,6 +47,7 @@ import {
   uploadDesignAssetWithProgress,
 } from '../lib/api.ts';
 import {
+  frontTemplatePart,
   isPartConfigured,
   mapDesignProjectToActiveCustomization,
   mapEditorStateToDesignProjectWriteInput,
@@ -487,6 +488,8 @@ export function Customization() {
         }
         if (isCancelled) return;
 
+        const templateFrontPart = frontTemplatePart(template);
+
         const blankCustomization: ActiveCustomization = {
           artworkId: '',
           userPrompt: '',
@@ -496,11 +499,11 @@ export function Customization() {
           productType: template.productTypeDisplay,
           productId: Number(product.id),
           selectedVariantId: sellable.selection.variant.id,
-          mockupImageUrl: template.baseImage || '',
-          templateBaseImageUrl: template.baseImage,
-          templateMaskImageUrl: template.maskImage,
-          templateShadowLayerUrl: template.shadowLayer,
-          templateHighlightLayerUrl: template.highlightLayer,
+          mockupImageUrl: templateFrontPart?.baseImage || '',
+          templateBaseImageUrl: templateFrontPart?.baseImage ?? null,
+          templateMaskImageUrl: templateFrontPart?.maskImage ?? null,
+          templateShadowLayerUrl: templateFrontPart?.shadowLayer ?? null,
+          templateHighlightLayerUrl: templateFrontPart?.highlightLayer ?? null,
           templateParts: template.parts,
           startingPrice: sellable.selection.startingPrice,
           sizes: product.availableSizes && product.availableSizes.length > 0 ? product.availableSizes : [...template.supportedSizes],
@@ -2643,13 +2646,9 @@ export function Customization() {
         </aside>
 
         <section className="min-w-0 flex-1 space-y-4">
-          {((customization.templateParts && customization.templateParts.length > 1) ||
-            (customization.productType === 'tshirt' && !customization.templateParts)) && (
+          {customization.templateParts && customization.templateParts.length > 1 && (
             <div className="flex flex-wrap gap-2">
-              {(customization.templateParts && customization.templateParts.length > 0
-                ? customization.templateParts.map((part) => part.name)
-                : ['front', 'back', 'left_sleeve', 'right_sleeve']
-              ).map(part => {
+              {customization.templateParts.map((part) => part.name).map(part => {
                 // `null` supportedPrintAreas means "no per-variant restriction known" — every
                 // configured part stays clickable. A resolved set means this exact colour/size
                 // doesn't print everywhere the template supports in general.

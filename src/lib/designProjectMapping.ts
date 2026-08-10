@@ -4,6 +4,7 @@ import type {
   CropOverride,
   DesignPlacement,
   DesignProject,
+  MockupTemplate,
   PartCustomization,
   PlacementOverride,
   TextElement,
@@ -11,6 +12,16 @@ import type {
 
 const DEFAULT_PLACEMENT: PlacementOverride = { x: 0, y: 0, width: 0, height: 0, fit: 'contain', rotation: 0, opacity: 1, cornerRadius: 0 };
 const DEFAULT_CROP: CropOverride = { left: 0, top: 0, width: 100, height: 100 };
+
+/** A template no longer has its own base/mask/shadow/highlight images — every renderable
+ * surface is a MockupTemplatePart. Prefer 'front', fall back to whichever part actually exists
+ * (an active template always has >= 1, enforced server-side). Exported for reuse anywhere else
+ * that used to read MockupTemplate.baseImage/etc directly (Common.tsx's Gallery template
+ * picker, Generator.tsx). */
+export function frontTemplatePart(template: MockupTemplate) {
+  const parts = template.parts ?? [];
+  return parts.find((part) => part.name === 'front') ?? parts[0] ?? null;
+}
 
 /** partsConfig[partName] (editor state) -> a DesignPlacement ready to send to the backend. */
 export function mapPartCustomizationToPlacement(partName: string, part: PartCustomization): DesignPlacement {
@@ -71,7 +82,8 @@ export function mapDesignProjectToActiveCustomization(
   }
 
   const frontPlacement = project.placements.find((placement) => placement.partName === 'front') ?? project.placements[0];
-  const primaryImageUrl = frontPlacement?.sourceImageUrl || project.sourceImageUrl || project.mockupTemplate.baseImage || '';
+  const templateFrontPart = frontTemplatePart(project.mockupTemplate);
+  const primaryImageUrl = frontPlacement?.sourceImageUrl || project.sourceImageUrl || templateFrontPart?.baseImage || '';
 
   return {
     artworkId: String(project.id),
@@ -82,11 +94,11 @@ export function mapDesignProjectToActiveCustomization(
     templateId: project.mockupTemplate.id,
     templateName: project.mockupTemplate.name,
     productType: project.mockupTemplate.productType,
-    mockupImageUrl: frontPlacement?.previewUrl || project.thumbnailUrl || project.thumbnail || project.mockupTemplate.baseImage || '',
-    templateBaseImageUrl: project.mockupTemplate.baseImage,
-    templateMaskImageUrl: project.mockupTemplate.maskImage,
-    templateShadowLayerUrl: project.mockupTemplate.shadowLayer,
-    templateHighlightLayerUrl: project.mockupTemplate.highlightLayer,
+    mockupImageUrl: frontPlacement?.previewUrl || project.thumbnailUrl || project.thumbnail || templateFrontPart?.baseImage || '',
+    templateBaseImageUrl: templateFrontPart?.baseImage ?? null,
+    templateMaskImageUrl: templateFrontPart?.maskImage ?? null,
+    templateShadowLayerUrl: templateFrontPart?.shadowLayer ?? null,
+    templateHighlightLayerUrl: templateFrontPart?.highlightLayer ?? null,
     templateParts: project.mockupTemplate.parts,
     startingPrice: meta.startingPrice,
     sizes: meta.sizes,

@@ -5,7 +5,7 @@
 
 import { Suspense, lazy, useEffect, useState, type ComponentType } from 'react';
 import { BrowserRouter as Router, Routes, Route, Outlet, Link, useLocation } from 'react-router-dom';
-import { LogIn, ShieldCheck, Sparkles } from 'lucide-react';
+import { LogIn, Lock, ShieldCheck, Sparkles } from 'lucide-react';
 import { Layout } from './components/Common.tsx';
 import { useAuth } from './context/AuthContext.tsx';
 import { AuthProvider } from './context/AuthContext.tsx';
@@ -23,6 +23,7 @@ const Generator = lazy(() => import('./pages/Generator.tsx').then((module) => ({
 const CartPage = lazy(() => import('./pages/CartPage.tsx').then((module) => ({ default: module.CartPage })));
 const CollectionDetail = lazy(() => import('./pages/CollectionDetail.tsx').then((module) => ({ default: module.CollectionDetail })));
 const SavedDesigns = lazy(() => import('./pages/SavedDesigns.tsx').then((module) => ({ default: module.SavedDesigns })));
+const AdminApp = lazy(() => import('./pages/admin/AdminApp.tsx').then((module) => ({ default: module.AdminApp })));
 
 function ScrollToTop() {
   const { pathname } = useLocation();
@@ -121,6 +122,60 @@ function ProtectedDreamAccess({ component: Component }: { component: ComponentTy
   return <Component />;
 }
 
+// Gates the custom admin management panel to Django `is_superuser` accounts only — deliberately
+// stricter than ProtectedDreamAccess above (which only requires being logged in) and stricter
+// than the customization editor's is_staff-gated dev-tools panel. A signed-in-but-not-superuser
+// visitor gets a distinct "not authorized" message, not the sign-in prompt above.
+function ProtectedAdminAccess({ component: Component }: { component: ComponentType }) {
+  const { user, loading, isSuperuser, signIn } = useAuth();
+
+  if (loading) {
+    return <RouteFallback />;
+  }
+
+  if (!user || !isSuperuser) {
+    return (
+      <div className="mx-auto flex min-h-[70vh] max-w-4xl flex-col items-center justify-center gap-6 px-6 py-12">
+        <Link
+          to="/"
+          className="self-start text-[10px] font-bold uppercase tracking-widest text-gray-500 transition-colors hover:text-white"
+        >
+          ← Back to Artverse
+        </Link>
+        <div className="glass-card w-full max-w-2xl border-white/10 p-8 text-center sm:p-12">
+          <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-full border border-neon-pink/30 bg-neon-pink/15 text-neon-pink">
+            <Lock size={28} />
+          </div>
+          <span className="mb-4 inline-flex items-center gap-2 rounded-full border border-neon-pink/20 bg-neon-pink/10 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.3em] text-neon-pink">
+            <ShieldCheck size={12} />
+            Restricted Area
+          </span>
+          <h1 className="text-3xl font-display font-black uppercase tracking-widest text-white sm:text-4xl">
+            {user ? 'Not Authorized' : 'Admin Sign-In Required'}
+          </h1>
+          <p className="mx-auto mt-4 max-w-xl text-sm uppercase tracking-wider leading-relaxed text-gray-400">
+            {user
+              ? "This account doesn't have superuser access to the Artverse admin panel."
+              : 'Sign in with a superuser account to manage catalog, pricing, and site content.'}
+          </p>
+          {!user && (
+            <button
+              type="button"
+              onClick={() => void signIn()}
+              className="mt-8 inline-flex items-center justify-center gap-3 rounded-2xl bg-white px-8 py-4 text-xs font-black uppercase tracking-[0.32em] text-cyber-black transition-all hover:bg-neon-purple hover:text-white"
+            >
+              <LogIn size={16} />
+              Login With Google
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  return <Component />;
+}
+
 // The customization editor is a full-screen, distraction-free workspace (like Printify's own
 // product editor) — it deliberately renders outside the global Navbar/Footer chrome that every
 // other route gets via LayoutRoute below.
@@ -151,6 +206,7 @@ function PageRoutes() {
         </Route>
         <Route path="/customize" element={<ProtectedDreamAccess component={Customization} />} />
         <Route path="/customize/product/:productSlug" element={<ProtectedDreamAccess component={Customization} />} />
+        <Route path="/admin/*" element={<ProtectedAdminAccess component={AdminApp} />} />
       </Routes>
     </Suspense>
   );

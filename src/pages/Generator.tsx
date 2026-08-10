@@ -12,6 +12,7 @@ import { createMockupRender, getMockupTemplates, getProducts } from '../lib/api.
 import { formatStartingPrice } from '../lib/pricing.ts';
 import { describeSellableSelectionReason, validateSellableSelection } from '../lib/sellableSelection.ts';
 import { useAiGeneration } from '../hooks/useAiGeneration.ts';
+import { frontTemplatePart } from '../lib/designProjectMapping.ts';
 
 const ASPECT_RATIO_OPTIONS = [
   { value: '1:1', label: 'Square' },
@@ -90,7 +91,7 @@ function getTemplateMeta(template: MockupTemplate) {
 }
 
 function getPlacementFromTemplate(template: MockupTemplate): PlacementOverride | null {
-  return getPlacementFromCandidate(template.config?.placement);
+  return getPlacementFromCandidate(frontTemplatePart(template)?.config?.placement);
 }
 
 function getPlacementFromCandidate(candidate: unknown): PlacementOverride | null {
@@ -187,6 +188,11 @@ export function Generator() {
               sourceImageUrl: selectedDesign.imageUrl,
               sourcePrompt: selectedDesign.title,
               templateId: template.id,
+              // Explicit now that MockupTemplate has no root image to fall back to — every
+              // template has a 'front' part (enforced server-side), and the backend also
+              // defaults a blank part_name to 'front' itself, but naming it here is clearer
+              // than relying on that default.
+              partName: 'front',
               variantColor: template.supportedColors[0] || meta.fallbackColours[0] || '',
               variantSize: template.supportedSizes[0] || meta.fallbackSizes[0] || '',
             });
@@ -230,18 +236,22 @@ export function Generator() {
     // price badge) — a template with no resolved, sellable Product+ProductVariant stays
     // preview-only. See lib/sellableSelection.ts.
     const sellableSelection = validateSellableSelection(matchedProduct, defaultVariant);
+    // print_area/is_recommended are optional display-only extras an admin can stash in a part's
+    // `config` JSON alongside `placement` — never guaranteed, hence the meta fallback either way.
+    const frontConfig = frontTemplatePart(template)?.config ?? {};
     return {
       templateId: template.id,
       renderId: render?.id,
       productType: template.productTypeDisplay,
       productKey: template.productType,
-      mockupImageUrl: render?.outputImage || render?.outputImageUrl || template.baseImage || generatedImage || '',
+      mockupImageUrl:
+        render?.outputImage || render?.outputImageUrl || frontTemplatePart(template)?.baseImage || generatedImage || '',
       matchedProduct,
       sellableSelection,
       sizes: template.supportedSizes.length > 0 ? template.supportedSizes : meta.fallbackSizes,
       colours: template.supportedColors.length > 0 ? template.supportedColors : meta.fallbackColours,
-      printArea: String(template.config.print_area ?? template.description ?? meta.printArea),
-      isRecommended: Boolean(template.config.is_recommended ?? meta.isRecommended),
+      printArea: String(frontConfig.print_area ?? template.description ?? meta.printArea),
+      isRecommended: Boolean(frontConfig.is_recommended ?? meta.isRecommended),
       status: render?.status ?? 'pending',
       errorMessage: render?.errorMessage ?? '',
     };
@@ -678,6 +688,7 @@ export function Generator() {
                           onClick={() => {
                             const matchedTemplate = mockupTemplates.find((template) => template.id === product.templateId);
                             const matchedProduct = product.matchedProduct;
+                            const matchedTemplateFrontPart = matchedTemplate ? frontTemplatePart(matchedTemplate) : null;
                             // Entering the customization editor stays allowed even without a
                             // resolved sellable product — see the matching note in Shop.tsx's
                             // handleOpenSpecsSetup. Customization.tsx independently disables its
@@ -692,10 +703,10 @@ export function Generator() {
                               productType: product.productType,
                               productId: matchedProduct ? Number(matchedProduct.id) : undefined,
                               mockupImageUrl: product.mockupImageUrl,
-                              templateBaseImageUrl: matchedTemplate?.baseImage,
-                              templateMaskImageUrl: matchedTemplate?.maskImage,
-                              templateShadowLayerUrl: matchedTemplate?.shadowLayer,
-                              templateHighlightLayerUrl: matchedTemplate?.highlightLayer,
+                              templateBaseImageUrl: matchedTemplateFrontPart?.baseImage,
+                              templateMaskImageUrl: matchedTemplateFrontPart?.maskImage,
+                              templateShadowLayerUrl: matchedTemplateFrontPart?.shadowLayer,
+                              templateHighlightLayerUrl: matchedTemplateFrontPart?.highlightLayer,
                               templateParts: matchedTemplate?.parts,
                               startingPrice: product.sellableSelection.selection?.startingPrice ?? null,
                               sizes:
