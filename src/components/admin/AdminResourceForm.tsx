@@ -39,6 +39,13 @@ export interface AdminFieldSchema {
   /** "placement" fields only — name of the sibling image field (e.g. "base_image") whose
    * current preview (new file or existing URL) the visual placement editor overlays. */
   imageField?: string;
+  /** "placement" fields only — name of the sibling safe_area/bleed_area fields (e.g.
+   * "safe_area"/"bleed_area") to also manage on the same visual canvas. Neither is listed as
+   * its own entry in the schema's `fields` array — the placement field owns reading/writing
+   * both, since they only make sense drawn relative to the placement box. Omit either to render
+   * that overlay's UI. */
+  safeAreaField?: string;
+  bleedAreaField?: string;
 }
 
 interface AdminResourceFormProps {
@@ -61,6 +68,15 @@ function defaultValueFor(field: AdminFieldSchema): unknown {
   return "";
 }
 
+function parseJsonFieldValue(value: unknown, label: string): unknown {
+  const raw = typeof value === "string" ? value.trim() : "";
+  try {
+    return raw === "" ? {} : JSON.parse(raw);
+  } catch {
+    throw new Error(`${label}: must be valid JSON.`);
+  }
+}
+
 const optionStyle = { backgroundColor: "#121212", color: "#ffffff" };
 
 export function AdminResourceForm({ fields, initialValues, onSubmit, onCancel, submitLabel = "Save" }: AdminResourceFormProps) {
@@ -70,6 +86,16 @@ export function AdminResourceForm({ fields, initialValues, onSubmit, onCancel, s
       const existing = initialValues?.[field.name];
       if (field.type === "json" || field.type === "placement") {
         initial[field.name] = existing !== undefined && existing !== null ? JSON.stringify(existing, null, 2) : "{}";
+        if (field.type === "placement" && field.safeAreaField) {
+          const existingSafeArea = initialValues?.[field.safeAreaField];
+          initial[field.safeAreaField] =
+            existingSafeArea !== undefined && existingSafeArea !== null ? JSON.stringify(existingSafeArea, null, 2) : "{}";
+        }
+        if (field.type === "placement" && field.bleedAreaField) {
+          const existingBleedArea = initialValues?.[field.bleedAreaField];
+          initial[field.bleedAreaField] =
+            existingBleedArea !== undefined && existingBleedArea !== null ? JSON.stringify(existingBleedArea, null, 2) : "{}";
+        }
       } else if (field.type === "datetime") {
         initial[field.name] = toDatetimeLocalValue(existing);
       } else if (existing !== undefined && existing !== null) {
@@ -132,8 +158,18 @@ export function AdminResourceForm({ fields, initialValues, onSubmit, onCancel, s
             continue;
           }
           const value = values[field.name];
-          if (value === undefined || value === null) continue;
-          formData.append(field.name, typeof value === "boolean" ? (value ? "true" : "false") : String(value));
+          if (value !== undefined && value !== null) {
+            formData.append(field.name, typeof value === "boolean" ? (value ? "true" : "false") : String(value));
+          }
+          if (field.type === "placement") {
+            for (const siblingField of [field.safeAreaField, field.bleedAreaField]) {
+              if (!siblingField) continue;
+              const siblingValue = values[siblingField];
+              if (siblingValue !== undefined && siblingValue !== null) {
+                formData.append(siblingField, String(siblingValue));
+              }
+            }
+          }
         }
         await onSubmit(formData);
       } else {
@@ -144,11 +180,14 @@ export function AdminResourceForm({ fields, initialValues, onSubmit, onCancel, s
           if (field.type === "number" || field.type === "decimal") {
             value = value === "" ? null : Number(value);
           } else if (field.type === "json" || field.type === "placement") {
-            const raw = typeof value === "string" ? value.trim() : "";
-            try {
-              value = raw === "" ? {} : JSON.parse(raw);
-            } catch {
-              throw new Error(`${field.label}: must be valid JSON.`);
+            value = parseJsonFieldValue(value, field.label);
+            if (field.type === "placement") {
+              if (field.safeAreaField) {
+                payload[field.safeAreaField] = parseJsonFieldValue(values[field.safeAreaField], "Safe Area");
+              }
+              if (field.bleedAreaField) {
+                payload[field.bleedAreaField] = parseJsonFieldValue(values[field.bleedAreaField], "Bleed Area");
+              }
             }
           } else if (field.type === "select" && value === "") {
             value = null;
@@ -316,6 +355,14 @@ export function AdminResourceForm({ fields, initialValues, onSubmit, onCancel, s
               onChange={(json) => setFieldValue(field.name, json)}
               imageUrl={field.imageField ? resolveImagePreview(field.imageField) : null}
               readOnly={field.readOnly}
+              safeAreaValue={field.safeAreaField ? (values[field.safeAreaField] as string) : undefined}
+              onSafeAreaChange={
+                field.safeAreaField ? (json) => setFieldValue(field.safeAreaField as string, json) : undefined
+              }
+              bleedAreaValue={field.bleedAreaField ? (values[field.bleedAreaField] as string) : undefined}
+              onBleedAreaChange={
+                field.bleedAreaField ? (json) => setFieldValue(field.bleedAreaField as string, json) : undefined
+              }
             />
           )}
 

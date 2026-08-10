@@ -126,22 +126,13 @@ const partFormFields: AdminFieldSchema[] = [
   },
   {
     name: "config",
-    label: "Print Area Placement",
+    label: "Print Area, Safe Area & Bleed",
     type: "placement",
     imageField: "base_image",
-    helpText: "Drag the box to move it, drag the corner handle to resize — this is the print area customers' artwork gets clamped into.",
-  },
-  {
-    name: "safe_area",
-    label: "Safe Area (JSON: left/top/width/height %)",
-    type: "json",
-    helpText: "Percentages within the print area above, not the whole image — e.g. {\"left\":5,\"top\":5,\"width\":90,\"height\":90}.",
-  },
-  {
-    name: "bleed_area",
-    label: "Bleed Area (JSON: top/right/bottom/left px)",
-    type: "json",
-    helpText: "Pixels beyond the print area's edge, in the same natural-image pixel space as the placement above.",
+    safeAreaField: "safe_area",
+    bleedAreaField: "bleed_area",
+    helpText:
+      "Drag the blue box to move/resize the print area. The green box inside it is the safe area (drag its own corner handle, or the numeric fields below). The amber outline is the bleed — drag its 4 edge handles, or use the numeric fields.",
   },
 ];
 
