@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 import { ArrowLeft, CheckCircle2, Loader2, XCircle } from "lucide-react";
 import { AdminResourceTable } from "../../../components/admin/AdminResourceTable.tsx";
 import { AdminResourceForm, type AdminFieldSchema } from "../../../components/admin/AdminResourceForm.tsx";
+import { useToast } from "../../../components/admin/ToastProvider.tsx";
 import { makeAdminCrud } from "../../../lib/adminApi.ts";
 import { cn } from "../../../lib/utils.ts";
 import { ApiError, resolveAssetUrl } from "../../../lib/api.ts";
@@ -52,11 +53,23 @@ interface PrintProvider {
   id: number;
   provider_id: number;
   title: string;
+  location: Record<string, unknown>;
   variant_count: number;
   available_variant_count: number;
   supported_placeholders: string[];
   missing_cost_variant_count: number;
   synced_at: string;
+}
+
+// Printify's own location shape (city/region/country) — degrades gracefully for any other object
+// shape, since this is passed through untouched from whatever Printify's API returned at sync
+// time. Mirrors PrintifyBlueprintsPage.tsx's identical helper.
+function formatLocation(location: Record<string, unknown> | null | undefined): string {
+  if (!location || typeof location !== "object") return "Unknown";
+  const parts = [location.city, location.region, location.country].filter(
+    (part): part is string => typeof part === "string" && part.length > 0,
+  );
+  return parts.length ? parts.join(", ") : "Unknown";
 }
 
 interface BlueprintRow {
@@ -164,6 +177,7 @@ function PrintifyMappingTab({
   template: MockupTemplateRow;
   onUpdated: (template: MockupTemplateRow) => void;
 }) {
+  const toast = useToast();
   const [blueprint, setBlueprint] = useState<BlueprintRow | null | "loading">("loading");
   const [selecting, setSelecting] = useState(false);
   const [selectedProviderId, setSelectedProviderId] = useState<string>(
@@ -214,8 +228,11 @@ function PrintifyMappingTab({
         selected_print_provider: selectedProviderId === "" ? null : Number(selectedProviderId),
       } as never);
       onUpdated(updated);
+      toast.success(selectedProviderId === "" ? "Print provider cleared." : "Print provider selected.");
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Could not update the selected provider.");
+      const message = err instanceof ApiError ? err.message : "Could not update the selected provider.";
+      setError(message);
+      toast.error(message, { title: "Save failed" });
     } finally {
       setSelecting(false);
     }
@@ -231,6 +248,12 @@ function PrintifyMappingTab({
         <div>
           <dt className="text-gray-500">Mapped Blueprint</dt>
           <dd className="font-bold text-white">{blueprint.title}</dd>
+        </div>
+        <div>
+          <dt className="text-gray-500">Provider Location</dt>
+          <dd className="font-bold text-white">
+            {selectedProvider ? formatLocation(selectedProvider.location) : "—"}
+          </dd>
         </div>
         <div>
           <dt className="text-gray-500">Provider Variant Count</dt>
@@ -270,7 +293,7 @@ function PrintifyMappingTab({
             <option value="" style={optionStyle}>— None —</option>
             {providers.map((provider) => (
               <option key={provider.id} value={provider.id} style={optionStyle}>
-                {provider.title} ({provider.variant_count} variants)
+                {provider.title} — {formatLocation(provider.location)} ({provider.variant_count} variants)
               </option>
             ))}
           </select>
@@ -330,15 +353,22 @@ function TemplateDetail({
   onBack: () => void;
   onUpdated: (template: MockupTemplateRow) => void;
 }) {
+  const toast = useToast();
   const [tab, setTab] = useState<"details" | "parts" | "printify">("details");
   const [current, setCurrent] = useState(template);
   const [saved, setSaved] = useState(false);
 
   const handleDetailsSubmit = async (payload: Record<string, unknown> | FormData) => {
-    const updated = await templateCrud.update(current.id, payload as never);
-    setCurrent(updated);
-    onUpdated(updated);
-    setSaved(true);
+    try {
+      const updated = await templateCrud.update(current.id, payload as never);
+      setCurrent(updated);
+      onUpdated(updated);
+      setSaved(true);
+      toast.success("Mockup template updated.");
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : "Save failed.", { title: "Update failed" });
+      throw err;
+    }
   };
 
   const handlePrintifyUpdated = (updated: MockupTemplateRow) => {

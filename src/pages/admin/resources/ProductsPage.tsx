@@ -16,7 +16,7 @@ import {
 } from "lucide-react";
 import { AdminResourceTable } from "../../../components/admin/AdminResourceTable.tsx";
 import { AdminResourceForm, type AdminFieldSchema, type AdminSelectOption } from "../../../components/admin/AdminResourceForm.tsx";
-import { useAdminDialog } from "../../../components/admin/AdminDialogProvider.tsx";
+import { useToast } from "../../../components/admin/ToastProvider.tsx";
 import { adminAction, makeAdminCrud } from "../../../lib/adminApi.ts";
 import { ApiError, resolveAssetUrl } from "../../../lib/api.ts";
 import { cn } from "../../../lib/utils.ts";
@@ -135,6 +135,7 @@ function ProductDetail({
   onBack: () => void;
   onUpdated: (product: ProductRow) => void;
 }) {
+  const toast = useToast();
   const [current, setCurrent] = useState(product);
   const [saved, setSaved] = useState(false);
   const [variants, setVariants] = useState<VariantRow[] | null>(null);
@@ -157,6 +158,20 @@ function ProductDetail({
     }
   }, [product]);
 
+  const refreshVariants = () => {
+    void variantCrud.list({ product: current.id, page_size: 200 }).then((result) => setVariants(result.results));
+  };
+
+  const syncPrintifyVariants = async () => {
+    try {
+      await adminAction(`/shop/admin/products/${current.id}/sync-variants/`);
+      toast.success("Variants synced from Printify.");
+      refreshVariants();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : "Sync failed.", { title: "Sync failed" });
+    }
+  };
+
   const variantCounts = useMemo(() => {
     if (!variants) return null;
     return {
@@ -178,10 +193,16 @@ function ProductDetail({
   ];
 
   const handleSubmit = async (payload: Record<string, unknown> | FormData) => {
-    const updated = await crud.update(current.id, payload as never);
-    setCurrent(updated);
-    onUpdated(updated);
-    setSaved(true);
+    try {
+      const updated = await crud.update(current.id, payload as never);
+      setCurrent(updated);
+      onUpdated(updated);
+      setSaved(true);
+      toast.success("Product updated.");
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : "Save failed.", { title: "Update failed" });
+      throw err;
+    }
   };
 
   const checklist: { label: string; done: boolean }[] = [
@@ -296,7 +317,7 @@ function ProductDetail({
               </a>
               <button
                 type="button"
-                onClick={() => void adminAction(`/shop/admin/products/${current.id}/sync-variants/`).then(() => window.location.reload())}
+                onClick={() => void syncPrintifyVariants()}
                 className="flex items-center justify-between rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-[10px] font-bold uppercase tracking-widest text-gray-300 hover:text-white"
               >
                 Sync Printify Variants
@@ -329,7 +350,7 @@ function ProductDetail({
 }
 
 export function ProductsPage() {
-  const dialog = useAdminDialog();
+  const toast = useToast();
   const [searchParams, setSearchParams] = useSearchParams();
   const [categoryOptions, setCategoryOptions] = useState<AdminSelectOption[]>([]);
   const [templateOptions, setTemplateOptions] = useState<AdminSelectOption[]>([]);
@@ -369,13 +390,20 @@ export function ProductsPage() {
     { name: "image_url", label: "Fallback Image URL", type: "text" },
   ];
 
+  const ACTION_SUCCESS_MESSAGE: Record<"activate" | "deactivate" | "sync-variants", string> = {
+    activate: "Product activated.",
+    deactivate: "Product deactivated.",
+    "sync-variants": "Variants synced from Printify.",
+  };
+
   const runAction = async (productId: number, action: "activate" | "deactivate" | "sync-variants", refresh: () => void) => {
     setPendingAction(`${productId}-${action}`);
     try {
       await adminAction(`/shop/admin/products/${productId}/${action}/`);
+      toast.success(ACTION_SUCCESS_MESSAGE[action]);
       refresh();
     } catch (err) {
-      await dialog.alert(err instanceof ApiError ? err.message : "Action failed.", { title: "Action failed" });
+      toast.error(err instanceof ApiError ? err.message : "Action failed.", { title: "Action failed" });
     } finally {
       setPendingAction(null);
     }

@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useState, type ReactNode } from "react";
 import { Loader2, Pencil, Plus, Search, Trash2 } from "lucide-react";
 import { Pagination } from "../Common.tsx";
 import { ApiError } from "../../lib/api.ts";
@@ -11,6 +11,7 @@ import type { AdminCrud } from "../../lib/adminApi.ts";
 import { AdminModal } from "./AdminModal.tsx";
 import { AdminResourceForm, type AdminFieldSchema } from "./AdminResourceForm.tsx";
 import { useAdminDialog } from "./AdminDialogProvider.tsx";
+import { useToast } from "./ToastProvider.tsx";
 
 export interface AdminColumnSchema<T> {
   key: string;
@@ -64,6 +65,11 @@ interface AdminResourceTableProps<T extends { id: number | string }> {
    * meant to apply to what's currently visible and deliberately checked. */
   selectable?: boolean;
   renderBulkActions?: (selectedIds: (number | string)[], helpers: { clearSelection: () => void; refresh: () => void }) => ReactNode;
+  /** When set, an extra full-width row is inserted directly under the row whose `id` matches —
+   * pushing subsequent rows down, not appended after the whole table — e.g. Printify Blueprints'
+   * per-row provider-inspection panel. `renderExpandedContent` supplies that row's content. */
+  expandedRowId?: number | string | null;
+  renderExpandedContent?: (row: T) => ReactNode;
 }
 
 export function AdminResourceTable<T extends { id: number | string }>({
@@ -85,8 +91,11 @@ export function AdminResourceTable<T extends { id: number | string }>({
   onEditRow,
   selectable = false,
   renderBulkActions,
+  expandedRowId = null,
+  renderExpandedContent,
 }: AdminResourceTableProps<T>) {
   const dialog = useAdminDialog();
+  const toast = useToast();
   const [rows, setRows] = useState<T[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -150,9 +159,10 @@ export function AdminResourceTable<T extends { id: number | string }>({
     setDeletingId(id);
     try {
       await crud.remove(id);
+      toast.success(`${title || "Item"} deleted.`);
       await load();
     } catch (err) {
-      await dialog.alert(err instanceof ApiError ? err.message : "Delete failed.", { title: "Delete failed" });
+      toast.error(err instanceof ApiError ? err.message : "Delete failed.", { title: "Delete failed" });
     } finally {
       setDeletingId(null);
     }
@@ -161,18 +171,30 @@ export function AdminResourceTable<T extends { id: number | string }>({
   const closeModal = () => setModalRow(null);
 
   const handleSubmit = async (payload: Record<string, unknown> | FormData) => {
-    if (modalRow === "new") {
-      if (extraCreateValues && !(payload instanceof FormData)) {
-        Object.assign(payload, extraCreateValues);
-      } else if (extraCreateValues && payload instanceof FormData) {
-        for (const [key, value] of Object.entries(extraCreateValues)) {
-          payload.append(key, String(value));
+    const isCreate = modalRow === "new";
+    try {
+      if (isCreate) {
+        if (extraCreateValues && !(payload instanceof FormData)) {
+          Object.assign(payload, extraCreateValues);
+        } else if (extraCreateValues && payload instanceof FormData) {
+          for (const [key, value] of Object.entries(extraCreateValues)) {
+            payload.append(key, String(value));
+          }
         }
+        await crud.create(payload as never);
+      } else if (modalRow) {
+        await crud.update(modalRow.id, payload as never);
       }
-      await crud.create(payload as never);
-    } else if (modalRow) {
-      await crud.update(modalRow.id, payload as never);
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : "Save failed.", {
+        title: isCreate ? "Create failed" : "Update failed",
+      });
+      // Rethrown so AdminResourceForm's own catch still shows the inline, field-context error
+      // and keeps the modal open for a retry — the toast is a supplementary, transient signal,
+      // not a replacement for that.
+      throw err;
     }
+    toast.success(`${title || "Item"} ${isCreate ? "created" : "updated"}.`);
     closeModal();
     await load();
   };
@@ -264,56 +286,65 @@ export function AdminResourceTable<T extends { id: number | string }>({
                 </tr>
               ) : (
                 rows.map((row) => (
-                  <tr key={row.id} className="border-b border-white/5 text-gray-300 last:border-0 hover:bg-white/3">
-                    {selectable && (
-                      <td className="px-4 py-3">
-                        <input
-                          type="checkbox"
-                          checked={selectedIds.has(row.id)}
-                          onChange={() => toggleRowSelected(row.id)}
-                          aria-label="Select row"
-                          className="h-3.5 w-3.5 accent-neon-purple"
-                        />
-                      </td>
+                  <Fragment key={row.id}>
+                    <tr className="border-b border-white/5 text-gray-300 last:border-0 hover:bg-white/3">
+                      {selectable && (
+                        <td className="px-4 py-3">
+                          <input
+                            type="checkbox"
+                            checked={selectedIds.has(row.id)}
+                            onChange={() => toggleRowSelected(row.id)}
+                            aria-label="Select row"
+                            className="h-3.5 w-3.5 accent-neon-purple"
+                          />
+                        </td>
+                      )}
+                      {columns.map((column) => (
+                        <td key={column.key} className="px-4 py-3">
+                          {column.render ? column.render(row) : String((row as Record<string, unknown>)[column.key] ?? "—")}
+                        </td>
+                      ))}
+                      {(formFields || deletable || extraRowActions) && (
+                        <td className="px-4 py-3">
+                          <div className="flex items-center justify-end gap-2">
+                            {extraRowActions?.(row, load)}
+                            {formFields && (
+                              <button
+                                type="button"
+                                onClick={() => (onEditRow ? onEditRow(row) : setModalRow(row))}
+                                aria-label="Edit"
+                                className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/10 bg-white/5 text-gray-300 hover:text-white"
+                              >
+                                <Pencil size={13} />
+                              </button>
+                            )}
+                            {deletable && (
+                              <button
+                                type="button"
+                                onClick={() => void handleDelete(row.id)}
+                                disabled={deletingId === row.id}
+                                aria-label="Delete"
+                                className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/10 bg-white/5 text-gray-300 hover:text-neon-pink disabled:opacity-50"
+                              >
+                                {deletingId === row.id ? (
+                                  <Loader2 size={13} className="animate-spin" />
+                                ) : (
+                                  <Trash2 size={13} />
+                                )}
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      )}
+                    </tr>
+                    {renderExpandedContent && expandedRowId === row.id && (
+                      <tr className="border-b border-white/5">
+                        <td colSpan={columns.length + 1 + (selectable ? 1 : 0)} className="p-0">
+                          {renderExpandedContent(row)}
+                        </td>
+                      </tr>
                     )}
-                    {columns.map((column) => (
-                      <td key={column.key} className="px-4 py-3">
-                        {column.render ? column.render(row) : String((row as Record<string, unknown>)[column.key] ?? "—")}
-                      </td>
-                    ))}
-                    {(formFields || deletable || extraRowActions) && (
-                      <td className="px-4 py-3">
-                        <div className="flex items-center justify-end gap-2">
-                          {extraRowActions?.(row, load)}
-                          {formFields && (
-                            <button
-                              type="button"
-                              onClick={() => (onEditRow ? onEditRow(row) : setModalRow(row))}
-                              aria-label="Edit"
-                              className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/10 bg-white/5 text-gray-300 hover:text-white"
-                            >
-                              <Pencil size={13} />
-                            </button>
-                          )}
-                          {deletable && (
-                            <button
-                              type="button"
-                              onClick={() => void handleDelete(row.id)}
-                              disabled={deletingId === row.id}
-                              aria-label="Delete"
-                              className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/10 bg-white/5 text-gray-300 hover:text-neon-pink disabled:opacity-50"
-                            >
-                              {deletingId === row.id ? (
-                                <Loader2 size={13} className="animate-spin" />
-                              ) : (
-                                <Trash2 size={13} />
-                              )}
-                            </button>
-                          )}
-                        </div>
-                      </td>
-                    )}
-                  </tr>
+                  </Fragment>
                 ))
               )}
             </tbody>

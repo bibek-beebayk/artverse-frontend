@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { ApiError, requestJson } from "../../lib/api.ts";
 import { AdminResourceForm, type AdminFieldSchema } from "./AdminResourceForm.tsx";
+import { useToast } from "./ToastProvider.tsx";
 
 interface AdminSingletonFormProps {
   title: string;
@@ -18,6 +19,7 @@ interface AdminSingletonFormProps {
 // create/delete, just one GET-then-PATCH form against a fixed detail endpoint backed by the
 // model's get_solo() classmethod on the backend.
 export function AdminSingletonForm({ title, path, fields }: AdminSingletonFormProps) {
+  const toast = useToast();
   const [values, setValues] = useState<Record<string, unknown> | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState<number | null>(null);
@@ -37,12 +39,18 @@ export function AdminSingletonForm({ title, path, fields }: AdminSingletonFormPr
   }, [path]);
 
   const handleSubmit = async (payload: Record<string, unknown> | FormData) => {
-    const updated = await requestJson<Record<string, unknown>>(path, {
-      method: "PATCH",
-      body: payload instanceof FormData ? payload : JSON.stringify(payload),
-    });
-    setValues(updated);
-    setSavedAt(Date.now());
+    try {
+      const updated = await requestJson<Record<string, unknown>>(path, {
+        method: "PATCH",
+        body: payload instanceof FormData ? payload : JSON.stringify(payload),
+      });
+      setValues(updated);
+      setSavedAt(Date.now());
+      toast.success(`${title} saved.`);
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : "Save failed.", { title: "Save failed" });
+      throw err;
+    }
   };
 
   return (

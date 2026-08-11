@@ -8,6 +8,7 @@ import { Loader2, Upload } from "lucide-react";
 import { AdminResourceTable } from "../../../components/admin/AdminResourceTable.tsx";
 import type { AdminFieldSchema, AdminSelectOption } from "../../../components/admin/AdminResourceForm.tsx";
 import { AdminModal } from "../../../components/admin/AdminModal.tsx";
+import { useToast } from "../../../components/admin/ToastProvider.tsx";
 import { makeAdminCrud } from "../../../lib/adminApi.ts";
 import { ApiError, requestJson } from "../../../lib/api.ts";
 
@@ -44,6 +45,7 @@ const categoryCrud = makeAdminCrud<{ id: number; name: string }>("/gallery/admin
 const collectionCrud = makeAdminCrud<{ id: number; name: string }>("/gallery/admin/collections");
 
 function BulkImportForm({ onDone }: { onDone: () => void }) {
+  const toast = useToast();
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<BulkImportResult | null>(null);
@@ -54,15 +56,24 @@ function BulkImportForm({ onDone }: { onDone: () => void }) {
     setError(null);
     setResult(null);
     const form = new FormData(event.currentTarget);
+    const isDryRun = form.get("dry_run") === "true";
     try {
       const response = await requestJson<BulkImportResult>("/gallery/admin/artworks/bulk-import/", {
         method: "POST",
         body: form,
       });
       setResult(response);
+      const summary = `${response.created} created, ${response.updated} updated, ${response.skipped} skipped, ${response.failed} failed.`;
+      if (response.failed > 0) {
+        toast.warning(summary, { title: isDryRun ? "Dry run complete" : "Bulk import complete" });
+      } else {
+        toast.success(summary, { title: isDryRun ? "Dry run complete" : "Bulk import complete" });
+      }
       onDone();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Bulk import failed.");
+      const message = err instanceof ApiError ? err.message : "Bulk import failed.";
+      setError(message);
+      toast.error(message, { title: "Bulk import failed" });
     } finally {
       setSubmitting(false);
     }

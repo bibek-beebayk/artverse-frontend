@@ -4,10 +4,11 @@
  */
 
 import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { ChevronDown, ChevronRight, Link2, Loader2, RefreshCw, ShieldAlert, ShieldCheck, ShieldQuestion } from "lucide-react";
 import { AdminResourceTable } from "../../../components/admin/AdminResourceTable.tsx";
 import { AdminModal } from "../../../components/admin/AdminModal.tsx";
-import { useAdminDialog } from "../../../components/admin/AdminDialogProvider.tsx";
+import { useToast } from "../../../components/admin/ToastProvider.tsx";
 import { adminAction, makeAdminCrud } from "../../../lib/adminApi.ts";
 import { ApiError, requestJson } from "../../../lib/api.ts";
 import { cn } from "../../../lib/utils.ts";
@@ -28,6 +29,7 @@ interface PrintProvider {
   id: number;
   provider_id: number;
   title: string;
+  location: Record<string, unknown>;
   variant_count: number;
   available_variant_count: number;
   supported_placeholders: string[];
@@ -38,6 +40,17 @@ interface PrintProvider {
 
 interface BlueprintDetail extends BlueprintRow {
   print_providers: PrintProvider[];
+}
+
+// Printify's own location shape (city/region/country) — degrades gracefully for any other
+// object shape rather than assuming exact keys, since this is passed through untouched from
+// whatever Printify's API returned at sync time (apps.printify.services.fetch_print_provider_location).
+function formatLocation(location: Record<string, unknown> | null | undefined): string {
+  if (!location || typeof location !== "object") return "Unknown";
+  const parts = [location.city, location.region, location.country].filter(
+    (part): part is string => typeof part === "string" && part.length > 0,
+  );
+  return parts.length ? parts.join(", ") : "Unknown";
 }
 
 interface ConnectionStatus {
@@ -147,13 +160,17 @@ function ConnectionStatusCard() {
 function ProviderRow({
   provider,
   blueprintTemplateId,
+  isActive,
   onSelected,
 }: {
   provider: PrintProvider;
   blueprintTemplateId: number | null;
+  /** True when this provider is the mapped template's *currently selected* one — i.e. the one
+   * actually fulfilling orders for that template right now, not just a candidate being browsed. */
+  isActive: boolean;
   onSelected: () => void;
 }) {
-  const dialog = useAdminDialog();
+  const toast = useToast();
   const [selecting, setSelecting] = useState(false);
 
   const selectProvider = async () => {
@@ -161,9 +178,10 @@ function ProviderRow({
     setSelecting(true);
     try {
       await templateCrud.update(blueprintTemplateId, { selected_print_provider: provider.id } as never);
+      toast.success(`Provider "${provider.title}" selected.`);
       onSelected();
     } catch (err) {
-      await dialog.alert(err instanceof ApiError ? err.message : "Could not select this provider.", {
+      toast.error(err instanceof ApiError ? err.message : "Could not select this provider.", {
         title: "Selection failed",
       });
     } finally {
@@ -172,11 +190,24 @@ function ProviderRow({
   };
 
   return (
-    <div className="grid grid-cols-1 gap-3 border-b border-white/5 px-4 py-3 last:border-0 sm:grid-cols-[1.5fr_1fr_1fr_1fr_1.5fr_auto] sm:items-center">
+    <div
+      className={cn(
+        "grid grid-cols-1 gap-3 border-b border-white/5 px-4 py-3 last:border-0 sm:grid-cols-[1.3fr_1fr_0.8fr_0.8fr_0.9fr_1.2fr_auto] sm:items-center",
+        isActive && "bg-neon-blue/5",
+      )}
+    >
       <div>
-        <div className="text-xs font-bold text-white">{provider.title}</div>
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-bold text-white">{provider.title}</span>
+          {isActive && (
+            <span className="rounded-full border border-neon-blue/30 bg-neon-blue/10 px-2 py-0.5 text-[8px] font-black uppercase tracking-widest text-neon-blue">
+              Active
+            </span>
+          )}
+        </div>
         <div className="text-[10px] text-gray-500">Provider #{provider.provider_id}</div>
       </div>
+      <div className="text-xs text-gray-300">{formatLocation(provider.location)}</div>
       <div className="text-xs text-gray-300">{provider.variant_count} variants</div>
       <div className="text-xs text-gray-300">{provider.available_variant_count} available</div>
       <div className={cn("text-xs", provider.missing_cost_variant_count > 0 ? "text-yellow-400" : "text-gray-300")}>
@@ -188,11 +219,17 @@ function ProviderRow({
       <button
         type="button"
         onClick={() => void selectProvider()}
-        disabled={selecting || !blueprintTemplateId}
-        title={blueprintTemplateId ? "Select this provider for the mapped template" : "Map a mockup template to this blueprint first"}
+        disabled={selecting || !blueprintTemplateId || isActive}
+        title={
+          isActive
+            ? "Already the selected provider for this template"
+            : blueprintTemplateId
+              ? "Select this provider for the mapped template"
+              : "Map a mockup template to this blueprint first"
+        }
         className="rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-[9px] font-black uppercase tracking-widest text-gray-200 hover:text-neon-blue disabled:opacity-40"
       >
-        {selecting ? <Loader2 size={12} className="animate-spin" /> : "Select Provider"}
+        {selecting ? <Loader2 size={12} className="animate-spin" /> : isActive ? "Active" : "Select Provider"}
       </button>
     </div>
   );
@@ -200,12 +237,26 @@ function ProviderRow({
 
 function BlueprintExpansion({ blueprintId, onProviderSelected }: { blueprintId: number; onProviderSelected: () => void }) {
   const [detail, setDetail] = useState<BlueprintDetail | null>(null);
+  const [activeProviderId, setActiveProviderId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const load = () => {
     void crud
       .get(blueprintId)
-      .then((row) => setDetail(row as unknown as BlueprintDetail))
+      .then((row) => {
+        const blueprintDetail = row as unknown as BlueprintDetail;
+        setDetail(blueprintDetail);
+        // A provider is only ever "active" relative to the template it's mapped through — the
+        // blueprint itself doesn't know which one is selected, so this needs a second lookup
+        // against the mapped template (if any).
+        if (blueprintDetail.mockup_template) {
+          void templateCrud
+            .get(blueprintDetail.mockup_template)
+            .then((template) => setActiveProviderId(template.selected_print_provider));
+        } else {
+          setActiveProviderId(null);
+        }
+      })
       .catch((err) => setError(err instanceof ApiError ? err.message : "Failed to load providers."));
   };
 
@@ -221,7 +272,7 @@ function BlueprintExpansion({ blueprintId, onProviderSelected }: { blueprintId: 
   }
 
   return (
-    <div className="border-t border-white/10 bg-white/2">
+    <div>
       {!detail.mockup_template && (
         <div className="px-4 py-3 text-[10px] text-gray-500">
           Map this blueprint to a mockup template (via the Map action) before you can select a provider for it.
@@ -235,6 +286,7 @@ function BlueprintExpansion({ blueprintId, onProviderSelected }: { blueprintId: 
             key={provider.id}
             provider={provider}
             blueprintTemplateId={detail.mockup_template}
+            isActive={provider.id === activeProviderId}
             onSelected={() => {
               load();
               onProviderSelected();
@@ -247,6 +299,7 @@ function BlueprintExpansion({ blueprintId, onProviderSelected }: { blueprintId: 
 }
 
 function MapBlueprintForm({ blueprint, onDone }: { blueprint: BlueprintRow; onDone: () => void }) {
+  const toast = useToast();
   const [templates, setTemplates] = useState<{ id: number; name: string }[]>([]);
   const [selected, setSelected] = useState<string>(blueprint.mockup_template ? String(blueprint.mockup_template) : "");
   const [submitting, setSubmitting] = useState(false);
@@ -263,9 +316,12 @@ function MapBlueprintForm({ blueprint, onDone }: { blueprint: BlueprintRow; onDo
       await adminAction(`/printify/blueprints/${blueprint.id}/map/`, {
         mockup_template_id: selected === "" ? null : Number(selected),
       });
+      toast.success(selected === "" ? "Blueprint unmapped." : "Blueprint mapping saved.");
       onDone();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Mapping failed.");
+      const message = err instanceof ApiError ? err.message : "Mapping failed.";
+      setError(message);
+      toast.error(message, { title: "Mapping failed" });
     } finally {
       setSubmitting(false);
     }
@@ -304,20 +360,35 @@ function MapBlueprintForm({ blueprint, onDone }: { blueprint: BlueprintRow; onDo
 }
 
 export function PrintifyBlueprintsPage() {
-  const dialog = useAdminDialog();
+  const toast = useToast();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [mappingBlueprint, setMappingBlueprint] = useState<BlueprintRow | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [pendingProviderSync, setPendingProviderSync] = useState<number | null>(null);
-  const [expandedRow, setExpandedRow] = useState<BlueprintRow | null>(null);
+  const [expandedRowId, setExpandedRowId] = useState<number | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+
+  const titleFilter = searchParams.get("title") ?? "";
+  const brand = searchParams.get("brand") ?? "";
+  const providerLocation = searchParams.get("provider_location") ?? "";
+  const isMapped = searchParams.get("is_mapped") ?? "";
+  const ordering = searchParams.get("ordering") ?? "";
+
+  const setFilter = (key: string, value: string) => {
+    const next = new URLSearchParams(searchParams);
+    if (value) next.set(key, value);
+    else next.delete(key);
+    setSearchParams(next, { replace: true });
+  };
 
   const syncBlueprints = async () => {
     setSyncing(true);
     try {
       await adminAction("/printify/sync-blueprints/");
+      toast.success("Blueprints synced from Printify.");
       setRefreshKey((key) => key + 1);
     } catch (err) {
-      await dialog.alert(err instanceof ApiError ? err.message : "Sync failed.", { title: "Sync failed" });
+      toast.error(err instanceof ApiError ? err.message : "Sync failed.", { title: "Sync failed" });
     } finally {
       setSyncing(false);
     }
@@ -327,15 +398,20 @@ export function PrintifyBlueprintsPage() {
     setPendingProviderSync(blueprintId);
     try {
       await adminAction(`/printify/blueprints/${blueprintId}/sync-providers/`);
+      toast.success("Print providers synced.");
       refresh();
     } catch (err) {
-      await dialog.alert(err instanceof ApiError ? err.message : "Provider sync failed.", {
+      toast.error(err instanceof ApiError ? err.message : "Provider sync failed.", {
         title: "Provider sync failed",
       });
     } finally {
       setPendingProviderSync(null);
     }
   };
+
+  const selectClass =
+    "rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs text-white focus:border-neon-purple/50 focus:outline-none";
+  const optionStyle = { backgroundColor: "#121212", color: "#ffffff" };
 
   return (
     <>
@@ -345,7 +421,57 @@ export function PrintifyBlueprintsPage() {
         key={refreshKey}
         title="Printify Blueprints"
         crud={crud}
-        searchable={false}
+        searchable
+        searchPlaceholder="Search title, brand, model…"
+        extraListParams={{
+          title: titleFilter || undefined,
+          brand: brand || undefined,
+          provider_location: providerLocation || undefined,
+          is_mapped: isMapped || undefined,
+          ordering: ordering || undefined,
+        }}
+        filtersNode={
+          <div className="flex flex-wrap gap-2">
+            <input
+              type="text"
+              value={titleFilter}
+              onChange={(event) => setFilter("title", event.target.value)}
+              placeholder="Filter by title only"
+              title="Narrows to this title specifically — the search box above already covers title, brand, and model together"
+              className={cn(selectClass, "w-44 placeholder:text-gray-600")}
+            />
+            <input
+              type="text"
+              value={brand}
+              onChange={(event) => setFilter("brand", event.target.value)}
+              placeholder="Filter by brand only"
+              title="Narrows to this brand specifically — the search box above already covers title, brand, and model together"
+              className={cn(selectClass, "w-44 placeholder:text-gray-600")}
+            />
+            <input
+              type="text"
+              value={providerLocation}
+              onChange={(event) => setFilter("provider_location", event.target.value)}
+              placeholder="Provider location (city, region, country)"
+              title="Matches blueprints with at least one print provider in this location"
+              className={cn(selectClass, "w-64 placeholder:text-gray-600")}
+            />
+            <select value={isMapped} onChange={(event) => setFilter("is_mapped", event.target.value)} className={selectClass}>
+              <option value="" style={optionStyle}>All Blueprints</option>
+              <option value="true" style={optionStyle}>Mapped</option>
+              <option value="false" style={optionStyle}>Unmapped</option>
+            </select>
+            <select value={ordering} onChange={(event) => setFilter("ordering", event.target.value)} className={selectClass}>
+              <option value="" style={optionStyle}>Title (A–Z)</option>
+              <option value="-title" style={optionStyle}>Title (Z–A)</option>
+              <option value="brand" style={optionStyle}>Brand (A–Z)</option>
+              <option value="-brand" style={optionStyle}>Brand (Z–A)</option>
+              <option value="newest" style={optionStyle}>Newest Synced</option>
+              <option value="oldest" style={optionStyle}>Oldest Synced</option>
+              <option value="-provider_count" style={optionStyle}>Most Providers</option>
+            </select>
+          </div>
+        }
         columns={[
           {
             key: "expand",
@@ -353,11 +479,11 @@ export function PrintifyBlueprintsPage() {
             render: (row) => (
               <button
                 type="button"
-                onClick={() => setExpandedRow(expandedRow?.id === row.id ? null : row)}
+                onClick={() => setExpandedRowId(expandedRowId === row.id ? null : row.id)}
                 aria-label="Inspect providers"
                 className="flex h-7 w-7 items-center justify-center rounded-lg border border-white/10 bg-white/5 text-gray-300 hover:text-white"
               >
-                {expandedRow?.id === row.id ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                {expandedRowId === row.id ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
               </button>
             ),
           },
@@ -367,6 +493,15 @@ export function PrintifyBlueprintsPage() {
           { key: "provider_count", label: "Providers" },
           { key: "is_mapped", label: "Mapped", render: (row) => (row.is_mapped ? "Yes" : "No") },
         ]}
+        expandedRowId={expandedRowId}
+        renderExpandedContent={(row) => (
+          <div className="border-t border-white/10 bg-white/2">
+            <div className="border-b border-white/10 px-4 py-2.5 text-[10px] font-bold uppercase tracking-widest text-gray-400">
+              Providers for &ldquo;{row.title}&rdquo;
+            </div>
+            <BlueprintExpansion blueprintId={row.id} onProviderSelected={() => setRefreshKey((key) => key + 1)} />
+          </div>
+        )}
         extraHeaderActions={
           <button
             type="button"
@@ -402,15 +537,6 @@ export function PrintifyBlueprintsPage() {
           </>
         )}
       />
-
-      {expandedRow !== null && (
-        <div className="glass-card -mt-4 border-white/10 p-0">
-          <div className="border-b border-white/10 px-4 py-3 text-[10px] font-bold uppercase tracking-widest text-gray-400">
-            Providers for &ldquo;{expandedRow.title}&rdquo;
-          </div>
-          <BlueprintExpansion blueprintId={expandedRow.id} onProviderSelected={() => setRefreshKey((key) => key + 1)} />
-        </div>
-      )}
 
       <AdminModal
         isOpen={mappingBlueprint !== null}

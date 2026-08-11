@@ -9,6 +9,7 @@ import { CheckCircle2, XCircle } from "lucide-react";
 import { AdminResourceTable } from "../../../components/admin/AdminResourceTable.tsx";
 import type { AdminFieldSchema, AdminSelectOption } from "../../../components/admin/AdminResourceForm.tsx";
 import { useAdminDialog } from "../../../components/admin/AdminDialogProvider.tsx";
+import { useToast } from "../../../components/admin/ToastProvider.tsx";
 import { adminAction, makeAdminCrud } from "../../../lib/adminApi.ts";
 import { ApiError } from "../../../lib/api.ts";
 import { cn } from "../../../lib/utils.ts";
@@ -71,6 +72,7 @@ function ReadinessPill({ status }: { status: ReadinessStatus }) {
 
 export function ProductVariantsPage() {
   const dialog = useAdminDialog();
+  const toast = useToast();
   const [searchParams, setSearchParams] = useSearchParams();
   const [productOptions, setProductOptions] = useState<AdminSelectOption[]>([]);
   const [templateOptions, setTemplateOptions] = useState<AdminSelectOption[]>([]);
@@ -155,11 +157,11 @@ export function ProductVariantsPage() {
         variant_ids: ids,
         ...(base_cost ? { base_cost } : {}),
       });
-      await dialog.alert(`Updated ${result.updated} variant(s).`, { title: "Bulk action complete" });
+      toast.success(`Updated ${result.updated} variant(s).`, { title: "Bulk action complete" });
       helpers.clearSelection();
       helpers.refresh();
     } catch (err) {
-      await dialog.alert(err instanceof ApiError ? err.message : "Bulk action failed.", { title: "Bulk action failed" });
+      toast.error(err instanceof ApiError ? err.message : "Bulk action failed.", { title: "Bulk action failed" });
     } finally {
       setPendingBulk(false);
     }
