@@ -32,6 +32,7 @@ import { SourceDesignAssetsPage } from "./resources/SourceDesignAssetsPage.tsx";
 import { NotificationSubscriptionsPage } from "./resources/NotificationSubscriptionsPage.tsx";
 import { FavoritesPage } from "./resources/FavoritesPage.tsx";
 import { CartsPage } from "./resources/CartsPage.tsx";
+import { AdminGuidePage } from "./resources/AdminGuidePage.tsx";
 
 // Route paths here must match adminNav.ts's item.path values exactly — that file is the single
 // source of truth for the sidebar, this file is the matching route table.
@@ -72,6 +73,7 @@ export function AdminApp() {
         <Route path="support/notifications" element={<NotificationSubscriptionsPage />} />
         <Route path="support/favorites" element={<FavoritesPage />} />
         <Route path="support/carts" element={<CartsPage />} />
+        <Route path="support/admin-guide" element={<AdminGuidePage />} />
 
         <Route path="*" element={<Navigate to={ADMIN_HOME_PATH} replace />} />
       </Routes>

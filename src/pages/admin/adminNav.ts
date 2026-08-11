@@ -11,6 +11,7 @@ import type { LucideIcon } from "lucide-react";
 import {
   Activity,
   Bell,
+  BookOpen,
   Boxes,
   Ticket,
   FolderTree,
@@ -107,6 +108,7 @@ export const ADMIN_NAV: AdminNavSection[] = [
       { path: "support/notifications", label: "Notification Subscriptions", icon: Bell },
       { path: "support/favorites", label: "Favorites", icon: Heart },
       { path: "support/carts", label: "Carts", icon: ShoppingCart },
+      { path: "support/admin-guide", label: "Admin Guide", icon: BookOpen },
     ],
   },
 ];
