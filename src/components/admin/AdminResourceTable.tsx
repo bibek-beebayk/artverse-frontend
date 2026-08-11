@@ -10,6 +10,7 @@ import { ApiError } from "../../lib/api.ts";
 import type { AdminCrud } from "../../lib/adminApi.ts";
 import { AdminModal } from "./AdminModal.tsx";
 import { AdminResourceForm, type AdminFieldSchema } from "./AdminResourceForm.tsx";
+import { useAdminDialog } from "./AdminDialogProvider.tsx";
 
 export interface AdminColumnSchema<T> {
   key: string;
@@ -85,6 +86,7 @@ export function AdminResourceTable<T extends { id: number | string }>({
   selectable = false,
   renderBulkActions,
 }: AdminResourceTableProps<T>) {
+  const dialog = useAdminDialog();
   const [rows, setRows] = useState<T[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -139,13 +141,18 @@ export function AdminResourceTable<T extends { id: number | string }>({
   };
 
   const handleDelete = async (id: number | string) => {
-    if (!window.confirm("Delete this item? This cannot be undone.")) return;
+    const confirmed = await dialog.confirm("Delete this item? This cannot be undone.", {
+      title: "Confirm delete",
+      confirmLabel: "Delete",
+      danger: true,
+    });
+    if (!confirmed) return;
     setDeletingId(id);
     try {
       await crud.remove(id);
       await load();
     } catch (err) {
-      window.alert(err instanceof ApiError ? err.message : "Delete failed.");
+      await dialog.alert(err instanceof ApiError ? err.message : "Delete failed.", { title: "Delete failed" });
     } finally {
       setDeletingId(null);
     }

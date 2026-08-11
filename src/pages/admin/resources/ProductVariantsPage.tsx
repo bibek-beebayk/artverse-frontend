@@ -8,6 +8,7 @@ import { useSearchParams } from "react-router-dom";
 import { CheckCircle2, XCircle } from "lucide-react";
 import { AdminResourceTable } from "../../../components/admin/AdminResourceTable.tsx";
 import type { AdminFieldSchema, AdminSelectOption } from "../../../components/admin/AdminResourceForm.tsx";
+import { useAdminDialog } from "../../../components/admin/AdminDialogProvider.tsx";
 import { adminAction, makeAdminCrud } from "../../../lib/adminApi.ts";
 import { ApiError } from "../../../lib/api.ts";
 import { cn } from "../../../lib/utils.ts";
@@ -69,6 +70,7 @@ function ReadinessPill({ status }: { status: ReadinessStatus }) {
 }
 
 export function ProductVariantsPage() {
+  const dialog = useAdminDialog();
   const [searchParams, setSearchParams] = useSearchParams();
   const [productOptions, setProductOptions] = useState<AdminSelectOption[]>([]);
   const [templateOptions, setTemplateOptions] = useState<AdminSelectOption[]>([]);
@@ -138,7 +140,10 @@ export function ProductVariantsPage() {
   const runBulk = async (action: "mark_available" | "mark_unavailable" | "set_base_cost", ids: (number | string)[], helpers: { clearSelection: () => void; refresh: () => void }) => {
     let base_cost: string | undefined;
     if (action === "set_base_cost") {
-      const input = window.prompt(`Set base cost for all ${ids.length} selected variant(s):`, "");
+      const input = await dialog.prompt(`Set base cost for all ${ids.length} selected variant(s):`, {
+        title: "Set base cost",
+        placeholder: "e.g. 12.50",
+      });
       if (input === null) return;
       base_cost = input.trim();
       if (!base_cost) return;
@@ -150,11 +155,11 @@ export function ProductVariantsPage() {
         variant_ids: ids,
         ...(base_cost ? { base_cost } : {}),
       });
-      window.alert(`Updated ${result.updated} variant(s).`);
+      await dialog.alert(`Updated ${result.updated} variant(s).`, { title: "Bulk action complete" });
       helpers.clearSelection();
       helpers.refresh();
     } catch (err) {
-      window.alert(err instanceof ApiError ? err.message : "Bulk action failed.");
+      await dialog.alert(err instanceof ApiError ? err.message : "Bulk action failed.", { title: "Bulk action failed" });
     } finally {
       setPendingBulk(false);
     }

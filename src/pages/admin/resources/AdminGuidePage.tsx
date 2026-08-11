@@ -32,18 +32,37 @@ function Callout({ tone = "info", children }: { tone?: "info" | "warning"; child
   );
 }
 
-function Steps({ items }: { items: ReactNode[] }) {
+function Steps({ items, startAt = 1 }: { items: ReactNode[]; startAt?: number }) {
   return (
     <ol className="flex flex-col gap-3">
       {items.map((item, index) => (
         <li key={index} className="flex gap-3 text-xs leading-relaxed text-gray-300">
           <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-white/15 bg-white/5 text-[10px] font-black text-white">
-            {index + 1}
+            {startAt + index}
           </span>
           <span className="pt-0.5">{item}</span>
         </li>
       ))}
     </ol>
+  );
+}
+
+function SubHeading({ children }: { children: ReactNode }) {
+  return (
+    <h3 className="mt-1 text-[10px] font-bold uppercase tracking-[0.2em] text-gray-500">{children}</h3>
+  );
+}
+
+function ChecklistGrid({ items }: { items: string[] }) {
+  return (
+    <div className="grid grid-cols-1 gap-x-6 gap-y-1.5 text-xs text-gray-300 sm:grid-cols-2">
+      {items.map((item) => (
+        <div key={item} className="flex items-start gap-2">
+          <span className="mt-0.5 text-gray-600">☐</span>
+          <span>{item}</span>
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -413,32 +432,177 @@ const SECTIONS: GuideSection[] = [
   },
   {
     id: "workflow",
-    title: "Common workflow: launch a brand-new customizable product",
+    title: "Product Publishing Manual — step by step",
     body: (
-      <Steps
-        items={[
-          <>Catalog → Mockup Templates → New. Fill name/slug/product type/description.</>,
-          <>
-            Open it, go to Parts, add at least a <Code>front</Code> part with a real base photo,
-            then use the visual editor to set the print area (and, if you want customer-visible
-            guides, the safe area and bleed).
-          </>,
-          <>Add Back/sleeve parts too, if this product prints there — otherwise leave them out.</>,
-          <>
-            Catalog → Products → New (or edit an existing one) and set its Mockup Template to the
-            template from step 1.
-          </>,
-          <>
-            Add Product Variants for each colour/size you're selling, with real pricing (either
-            from the Product Variants screen or inline while editing the product) — or map to
-            Printify and use Sync Printify Variants, then fill in each variant's Base Cost.
-          </>,
-          <>
-            Check the product's readiness badge on the Products list — once it reads Ready, use
-            the row's Activate action.
-          </>,
-        ]}
-      />
+      <div className="flex flex-col gap-5">
+        <p className="text-xs leading-relaxed text-gray-300">
+          A complete, in-order walkthrough for taking a Printify-backed product from nothing to a
+          live, customer-customizable storefront listing — entirely through this panel. The full
+          write-up (with worked examples for every field) lives in{" "}
+          <Code>docs/ADMIN_GUIDE.md</Code> §10; this is the condensed, click-by-click version.
+        </p>
+
+        <div>
+          <SubHeading>Category, blueprint &amp; provider</SubHeading>
+          <Steps
+            items={[
+              <>
+                Catalog → Product Categories → New. Just a name — slug is optional, it
+                auto-generates from the name if you leave it blank.
+              </>,
+              <>
+                Printify → Blueprints. Check the Connection Status card ("Check Connection" if
+                unsure), then Sync Blueprints if the one you need isn't listed yet. Find the blank
+                product you want to sell — don't create the Artverse product yet.
+              </>,
+              <>
+                Expand the blueprint and sync its providers if none are listed. Compare each
+                provider's variant count, available-variant count, missing-cost count, and
+                supported print areas — if you need front <em>and</em> back printing, don't pick a
+                provider that only covers one.
+              </>,
+            ]}
+          />
+        </div>
+
+        <div>
+          <SubHeading>Mockup template</SubHeading>
+          <Steps
+            startAt={4}
+            items={[
+              <>
+                Catalog → Mockup Templates → New. Fill name/product type/description, leave slug
+                blank to auto-generate, and leave Active unchecked — it can't activate with zero
+                parts yet anyway.
+              </>,
+              <>
+                On the Parts tab, add at least a <Code>front</Code> part with a real base photo,
+                then use the visual editor for print area (blue), safe area (green), and bleed
+                (amber). Add Back/sleeve parts only if this product prints there.
+              </>,
+              <>
+                Back on Printify → Blueprints, use the row's Map action to point this blueprint at
+                the template you just created.
+              </>,
+              <>
+                On the template's Printify Mapping tab, select a provider — only ones belonging to
+                the mapped blueprint are offered. Check the per-part compatibility table; if a
+                configured part shows Unsupported, remove it or pick a different provider.
+              </>,
+              <>
+                Review Details/Parts/Printify Mapping one more time, then check Active on the
+                Details tab.
+              </>,
+            ]}
+          />
+        </div>
+
+        <div>
+          <SubHeading>Product, variants &amp; pricing</SubHeading>
+          <Steps
+            startAt={9}
+            items={[
+              <>
+                Catalog → Products → New. Set Category and Mockup Template to what you built
+                above; slug is optional here too. Leave it inactive for now.
+              </>,
+              <>
+                Open the product and use Sync Printify Variants (a row action, or a Quick Link on
+                its detail view) to create variant rows from the selected provider's catalogue.
+              </>,
+              <>
+                Catalog → Product Variants, filtered to this product — review SKU, colour/size,
+                cost, availability, external provider/ID, and each row's readiness badge (
+                <Code>SELLABLE</Code> / <Code>MISSING COST</Code> / <Code>UNAVAILABLE</Code> /{" "}
+                <Code>INVALID MAPPING</Code>).
+              </>,
+              <>
+                Set a real <Code>base_cost</Code> on every variant you intend to sell — a variant
+                with no cost is never sellable regardless of availability. Select several rows and
+                use the bulk Set Base Cost action when they share a price. Never invent a number.
+              </>,
+              <>
+                For Printify-backed variants, confirm External Provider is set <em>and</em>{" "}
+                External Variant ID is present — one without the other reads{" "}
+                <Code>INVALID MAPPING</Code>.
+              </>,
+              <>
+                Pricing → Pricing Rules — the storefront price is base cost plus the single most
+                specific applicable markup (Global/Category/Product, never stacked).
+              </>,
+              <>
+                Pricing → Print Area Charges — extra cost per print area (e.g. +$5 for back
+                printing), applied on top of whatever the customer actually configures.
+              </>,
+            ]}
+          />
+        </div>
+
+        <div>
+          <SubHeading>Readiness &amp; activation</SubHeading>
+          <Steps
+            startAt={16}
+            items={[
+              <>
+                On the product's detail view, check the Storefront Status card and the onboarding
+                checklist — both should be filling in as you complete the steps above.
+              </>,
+              <>
+                Resolve anything the readiness badge flags — no variants, no sellable variant,
+                missing cost, no mockup template, a template mismatch, an invalid external
+                mapping, or no provider selected — until it reads <strong className="text-white">Ready</strong>.
+              </>,
+              <>Use the product's Activate action — it runs the exact same check the badge showed you, so a Ready product should never fail here.</>,
+            ]}
+          />
+        </div>
+
+        <div>
+          <SubHeading>Verify the storefront &amp; customizer</SubHeading>
+          <Steps
+            startAt={19}
+            items={[
+              <>Open the public Shop and confirm the product's image, name, price, and Customize button all appear.</>,
+              <>Click Customize — a sellable variant should be pre-selected and the mockup template loaded, with no artwork chosen yet.</>,
+              <>Test colour/size selection — unavailable and missing-cost variants render disabled, only sellable ones can be picked.</>,
+              <>Choose Gallery, apply an admin-uploaded artwork, and confirm drag/resize/rotate/crop and the safe-area/bleed guides all work.</>,
+              <>Choose Upload Design, upload a transparent PNG, and confirm it renders correctly with transparency preserved.</>,
+              <>Choose Generate with AI, generate a result, and explicitly select it before it applies to the design.</>,
+              <>For a front/back product, add different designs to each side and confirm switching between them keeps each side's state independent.</>,
+              <>Save the design, reload, and reopen it from Saved Designs — everything (product, variant, artwork, both parts, text, placement) should restore.</>,
+              <>Generate a production print file and confirm it's transparent, correctly sized/DPI'd, and contains no garment photo, guides, or mockup shading.</>,
+              <>Add to cart and confirm the correct variant/pricing is used — checkout itself is intentionally not implemented yet, so the cart stops at its "coming soon" state.</>,
+            ]}
+          />
+        </div>
+
+        <div>
+          <SubHeading>Quick checklist</SubHeading>
+          <ChecklistGrid
+            items={[
+              "Category created (or reused)",
+              "Printify connection checked",
+              "Blueprint synced & providers reviewed",
+              "Mockup template created with ≥1 part",
+              "Blueprint mapped to template",
+              "Provider selected, parts compatible",
+              "Mockup template activated",
+              "Product created (inactive) with category + template",
+              "Variants synced from Printify",
+              "Base costs set on every sellable variant",
+              "External provider/ID verified",
+              "Pricing rules & print-area charges configured",
+              "Readiness reads Ready",
+              "Product activated",
+              "Verified in Shop and the Customizer",
+              "Gallery / Upload / AI artwork all tested",
+              "Saved design restores correctly",
+              "Production print files verified",
+              "Cart pricing verified",
+            ]}
+          />
+        </div>
+      </div>
     ),
   },
   {

@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 import { ChevronDown, ChevronRight, Link2, Loader2, RefreshCw, ShieldAlert, ShieldCheck, ShieldQuestion } from "lucide-react";
 import { AdminResourceTable } from "../../../components/admin/AdminResourceTable.tsx";
 import { AdminModal } from "../../../components/admin/AdminModal.tsx";
+import { useAdminDialog } from "../../../components/admin/AdminDialogProvider.tsx";
 import { adminAction, makeAdminCrud } from "../../../lib/adminApi.ts";
 import { ApiError, requestJson } from "../../../lib/api.ts";
 import { cn } from "../../../lib/utils.ts";
@@ -152,6 +153,7 @@ function ProviderRow({
   blueprintTemplateId: number | null;
   onSelected: () => void;
 }) {
+  const dialog = useAdminDialog();
   const [selecting, setSelecting] = useState(false);
 
   const selectProvider = async () => {
@@ -161,7 +163,9 @@ function ProviderRow({
       await templateCrud.update(blueprintTemplateId, { selected_print_provider: provider.id } as never);
       onSelected();
     } catch (err) {
-      window.alert(err instanceof ApiError ? err.message : "Could not select this provider.");
+      await dialog.alert(err instanceof ApiError ? err.message : "Could not select this provider.", {
+        title: "Selection failed",
+      });
     } finally {
       setSelecting(false);
     }
@@ -300,6 +304,7 @@ function MapBlueprintForm({ blueprint, onDone }: { blueprint: BlueprintRow; onDo
 }
 
 export function PrintifyBlueprintsPage() {
+  const dialog = useAdminDialog();
   const [mappingBlueprint, setMappingBlueprint] = useState<BlueprintRow | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [pendingProviderSync, setPendingProviderSync] = useState<number | null>(null);
@@ -312,7 +317,7 @@ export function PrintifyBlueprintsPage() {
       await adminAction("/printify/sync-blueprints/");
       setRefreshKey((key) => key + 1);
     } catch (err) {
-      window.alert(err instanceof ApiError ? err.message : "Sync failed.");
+      await dialog.alert(err instanceof ApiError ? err.message : "Sync failed.", { title: "Sync failed" });
     } finally {
       setSyncing(false);
     }
@@ -324,7 +329,9 @@ export function PrintifyBlueprintsPage() {
       await adminAction(`/printify/blueprints/${blueprintId}/sync-providers/`);
       refresh();
     } catch (err) {
-      window.alert(err instanceof ApiError ? err.message : "Provider sync failed.");
+      await dialog.alert(err instanceof ApiError ? err.message : "Provider sync failed.", {
+        title: "Provider sync failed",
+      });
     } finally {
       setPendingProviderSync(null);
     }

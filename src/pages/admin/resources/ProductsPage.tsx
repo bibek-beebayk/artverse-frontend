@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { AdminResourceTable } from "../../../components/admin/AdminResourceTable.tsx";
 import { AdminResourceForm, type AdminFieldSchema, type AdminSelectOption } from "../../../components/admin/AdminResourceForm.tsx";
+import { useAdminDialog } from "../../../components/admin/AdminDialogProvider.tsx";
 import { adminAction, makeAdminCrud } from "../../../lib/adminApi.ts";
 import { ApiError, resolveAssetUrl } from "../../../lib/api.ts";
 import { cn } from "../../../lib/utils.ts";
@@ -328,6 +329,7 @@ function ProductDetail({
 }
 
 export function ProductsPage() {
+  const dialog = useAdminDialog();
   const [searchParams, setSearchParams] = useSearchParams();
   const [categoryOptions, setCategoryOptions] = useState<AdminSelectOption[]>([]);
   const [templateOptions, setTemplateOptions] = useState<AdminSelectOption[]>([]);
@@ -373,7 +375,7 @@ export function ProductsPage() {
       await adminAction(`/shop/admin/products/${productId}/${action}/`);
       refresh();
     } catch (err) {
-      window.alert(err instanceof ApiError ? err.message : "Action failed.");
+      await dialog.alert(err instanceof ApiError ? err.message : "Action failed.", { title: "Action failed" });
     } finally {
       setPendingAction(null);
     }
