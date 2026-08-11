@@ -27,7 +27,7 @@ export function ProductCategoriesPage() {
       ]}
       formFields={[
         { name: "name", label: "Name", type: "text", required: true },
-        { name: "slug", label: "Slug", type: "text", required: true, helpText: "URL-friendly identifier, e.g. apparel." },
+        { name: "slug", label: "Slug", type: "text", helpText: "Optional — leave blank to auto-generate a unique slug from the name, e.g. apparel." },
       ]}
     />
   );

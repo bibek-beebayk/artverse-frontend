@@ -30,7 +30,7 @@ export function VideoClipsPage() {
       ]}
       formFields={[
         { name: "title", label: "Title", type: "text", required: true },
-        { name: "slug", label: "Slug", type: "text", required: true },
+        { name: "slug", label: "Slug", type: "text", helpText: "Optional — leave blank to auto-generate a unique slug from the title." },
         { name: "thumbnail_url", label: "Thumbnail URL", type: "text" },
         { name: "video_url", label: "Video URL", type: "text", required: true },
         { name: "is_published", label: "Published", type: "boolean" },

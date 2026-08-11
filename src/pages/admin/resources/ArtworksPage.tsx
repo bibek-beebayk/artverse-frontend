@@ -151,7 +151,7 @@ export function ArtworksPage() {
 
   const formFields: AdminFieldSchema[] = [
     { name: "title", label: "Title", type: "text", required: true },
-    { name: "slug", label: "Slug", type: "text", required: true },
+    { name: "slug", label: "Slug", type: "text", helpText: "Optional — leave blank to auto-generate a unique slug from the title." },
     { name: "category", label: "Category", type: "select", required: true, options: categoryOptions },
     { name: "collection", label: "Collection", type: "select", options: collectionOptions },
     { name: "description", label: "Description", type: "textarea" },

@@ -79,6 +79,14 @@ const SECTIONS: GuideSection[] = [
           visual <Code>safe_area</Code>/<Code>bleed_area</Code> editor's Django-admin equivalent)
           are Django-admin-only — see "What's Django-admin-only" at the end of this guide.
         </p>
+        <Callout>
+          <strong className="text-white">Slug fields are optional everywhere.</strong> Product
+          Categories, Products, Mockup Templates, and every Gallery resource (Categories,
+          Collections, Artworks, Video Clips) let you leave Slug blank when creating a new row —
+          one is generated automatically from the name/title, with a <Code>-2</Code>,{" "}
+          <Code>-3</Code>, ... suffix appended if that slug is already taken. Type your own to
+          override it; it's never overwritten once set.
+        </Callout>
       </div>
     ),
   },

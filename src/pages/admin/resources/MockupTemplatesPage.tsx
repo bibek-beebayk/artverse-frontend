@@ -99,7 +99,7 @@ const PART_NAME_OPTIONS = [
 // will reject with a clear error if you try before adding a part).
 const templateFormFields: AdminFieldSchema[] = [
   { name: "name", label: "Name", type: "text", required: true },
-  { name: "slug", label: "Slug", type: "text", required: true },
+  { name: "slug", label: "Slug", type: "text", helpText: "Optional — leave blank to auto-generate a unique slug from the name." },
   { name: "product_type", label: "Product Type", type: "select", required: true, options: PRODUCT_TYPE_OPTIONS },
   { name: "description", label: "Description", type: "textarea" },
   {

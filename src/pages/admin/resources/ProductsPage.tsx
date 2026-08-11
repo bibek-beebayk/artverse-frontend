@@ -168,7 +168,7 @@ function ProductDetail({
 
   const formFields: AdminFieldSchema[] = [
     { name: "name", label: "Name", type: "text", required: true },
-    { name: "slug", label: "Slug", type: "text", required: true },
+    { name: "slug", label: "Slug", type: "text", helpText: "Optional — leave blank to auto-generate a unique slug from the name." },
     { name: "category", label: "Category", type: "select", required: true, options: categoryOptions },
     { name: "mockup_template", label: "Mockup Template", type: "select", options: templateOptions },
     { name: "description", label: "Description", type: "textarea" },
@@ -359,7 +359,7 @@ export function ProductsPage() {
 
   const formFields: AdminFieldSchema[] = [
     { name: "name", label: "Name", type: "text", required: true },
-    { name: "slug", label: "Slug", type: "text", required: true },
+    { name: "slug", label: "Slug", type: "text", helpText: "Optional — leave blank to auto-generate a unique slug from the name." },
     { name: "category", label: "Category", type: "select", required: true, options: categoryOptions },
     { name: "mockup_template", label: "Mockup Template", type: "select", options: templateOptions },
     { name: "description", label: "Description", type: "textarea" },
