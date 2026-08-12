@@ -14,7 +14,7 @@ import { adminAction, makeAdminCrud } from "../../../lib/adminApi.ts";
 import { ApiError } from "../../../lib/api.ts";
 import { cn } from "../../../lib/utils.ts";
 
-type ReadinessStatus = "sellable" | "missing_cost" | "unavailable" | "invalid_mapping";
+export type ReadinessStatus = "sellable" | "missing_cost" | "unavailable" | "invalid_mapping";
 
 interface ProductVariantRow {
   id: number;
@@ -62,7 +62,7 @@ const READINESS_CLASS: Record<ReadinessStatus, string> = {
   invalid_mapping: "border-neon-pink/30 bg-neon-pink/10 text-neon-pink",
 };
 
-function ReadinessPill({ status }: { status: ReadinessStatus }) {
+export function ReadinessPill({ status }: { status: ReadinessStatus }) {
   return (
     <span className={cn("rounded-full border px-2.5 py-1 text-[9px] font-black uppercase tracking-widest", READINESS_CLASS[status])}>
       {READINESS_LABEL[status]}

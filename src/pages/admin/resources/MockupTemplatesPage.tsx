@@ -12,7 +12,7 @@ import { makeAdminCrud } from "../../../lib/adminApi.ts";
 import { cn } from "../../../lib/utils.ts";
 import { ApiError, resolveAssetUrl } from "../../../lib/api.ts";
 
-interface MockupTemplateRow {
+export interface MockupTemplateRow {
   id: number;
   name: string;
   slug: string;
@@ -27,7 +27,7 @@ interface MockupTemplateRow {
   selected_print_provider: number | null;
 }
 
-interface MockupTemplatePartRow {
+export interface MockupTemplatePartRow {
   id: number;
   template: number;
   name: string;
@@ -45,11 +45,30 @@ interface MockupTemplatePartRow {
   printify_placeholder_position: string;
 }
 
+/** A colour-specific override of a part's preview mockup images (e.g. Front+Black vs.
+ * Front+White) — reused across every size of that colour. Any field left blank falls back to
+ * the parent part's own generic asset at preview-render time (see apps.generator.services.
+ * resolve_part_assets on the backend); this is preview-only and never touches production print
+ * files. */
+interface MockupTemplatePartColorAssetRow {
+  id: number;
+  part: number;
+  color_name: string;
+  base_image: string | null;
+  mask_image: string | null;
+  displacement_map: string | null;
+  shadow_layer: string | null;
+  highlight_layer: string | null;
+}
+
 const templateCrud = makeAdminCrud<MockupTemplateRow>("/generator/admin/mockup-templates");
 const partCrud = makeAdminCrud<MockupTemplatePartRow>("/generator/admin/mockup-template-parts");
+const colorAssetCrud = makeAdminCrud<MockupTemplatePartColorAssetRow>(
+  "/generator/admin/mockup-template-part-color-assets",
+);
 const blueprintCrud = makeAdminCrud<BlueprintRow>("/printify/blueprints");
 
-interface PrintProvider {
+export interface PrintProvider {
   id: number;
   provider_id: number;
   title: string;
@@ -64,7 +83,7 @@ interface PrintProvider {
 // Printify's own location shape (city/region/country) — degrades gracefully for any other object
 // shape, since this is passed through untouched from whatever Printify's API returned at sync
 // time. Mirrors PrintifyBlueprintsPage.tsx's identical helper.
-function formatLocation(location: Record<string, unknown> | null | undefined): string {
+export function formatLocation(location: Record<string, unknown> | null | undefined): string {
   if (!location || typeof location !== "object") return "Unknown";
   const parts = [location.city, location.region, location.country].filter(
     (part): part is string => typeof part === "string" && part.length > 0,
@@ -72,11 +91,15 @@ function formatLocation(location: Record<string, unknown> | null | undefined): s
   return parts.length ? parts.join(", ") : "Unknown";
 }
 
-interface BlueprintRow {
+export interface BlueprintRow {
   id: number;
   blueprint_id: number;
   title: string;
   mockup_template: number | null;
+  /** Printify's own catalogue/marketing photos for this blueprint — synced as-is, unvalidated
+   * shape (see the "Or use a Printify catalog image" picker on the Part form's Base Image
+   * field). Not necessarily a clean flat product shot; review before relying on one as-is. */
+  images?: unknown[];
   print_providers?: PrintProvider[];
 }
 
@@ -98,7 +121,7 @@ const PRODUCT_TYPE_OPTIONS = [
   { value: "tote_bag", label: "Tote Bag" },
 ];
 
-const PART_NAME_OPTIONS = [
+export const PART_NAME_OPTIONS = [
   { value: "front", label: "Front" },
   { value: "back", label: "Back" },
   { value: "left_sleeve", label: "Left Sleeve" },
@@ -110,7 +133,7 @@ const PART_NAME_OPTIONS = [
 // Every renderable surface is a MockupTemplatePart (see the Parts tab below), and a template
 // can't be activated until it has at least one (enforced server-side; the Active toggle here
 // will reject with a clear error if you try before adding a part).
-const templateFormFields: AdminFieldSchema[] = [
+export const templateFormFields: AdminFieldSchema[] = [
   { name: "name", label: "Name", type: "text", required: true },
   { name: "slug", label: "Slug", type: "text", helpText: "Optional — leave blank to auto-generate a unique slug from the name." },
   { name: "product_type", label: "Product Type", type: "select", required: true, options: PRODUCT_TYPE_OPTIONS },
@@ -142,35 +165,177 @@ const templateFormFields: AdminFieldSchema[] = [
   },
 ];
 
-const partFormFields: AdminFieldSchema[] = [
-  { name: "name", label: "Part", type: "select", required: true, options: PART_NAME_OPTIONS },
-  { name: "base_image", label: "Base Image", type: "image", required: true },
-  { name: "mask_image", label: "Mask Image", type: "image" },
-  { name: "displacement_map", label: "Displacement Map", type: "image" },
-  { name: "shadow_layer", label: "Shadow Layer", type: "image" },
-  { name: "highlight_layer", label: "Highlight Layer", type: "image" },
-  { name: "dpi", label: "Required DPI", type: "number" },
-  { name: "print_file_width", label: "Print File Width (px)", type: "number" },
-  { name: "print_file_height", label: "Print File Height (px)", type: "number" },
-  {
-    name: "printify_placeholder_position",
-    label: "Printify Placeholder Position",
-    type: "text",
-    helpText: "Falls back to the part name if blank.",
-  },
-  {
-    name: "config",
-    label: "Print Area, Safe Area & Bleed",
-    type: "placement",
-    imageField: "base_image",
-    safeAreaField: "safe_area",
-    bleedAreaField: "bleed_area",
-    helpText:
-      "Drag the blue box to move/resize the print area. The green box inside it is the safe area (drag its own corner handle, or the numeric fields below). The amber outline is the bleed — drag its 4 edge handles, or use the numeric fields.",
-  },
-];
+// blueprintImages/blueprintId let the Base Image field also offer "use a Printify catalog
+// image" — computed per-render from whichever blueprint is mapped to the template currently
+// being edited (see TemplateDetail), since that's not known at module load time the way the
+// rest of this schema is.
+export function buildPartFormFields(blueprintImages: string[], blueprintId: number | null): AdminFieldSchema[] {
+  return [
+    { name: "name", label: "Part", type: "select", required: true, options: PART_NAME_OPTIONS },
+    {
+      name: "base_image",
+      label: "Base Image",
+      type: "image",
+      required: true,
+      printifyImages: blueprintImages,
+      printifyBlueprintId: blueprintId ?? undefined,
+    },
+    { name: "mask_image", label: "Mask Image", type: "image" },
+    { name: "displacement_map", label: "Displacement Map", type: "image" },
+    { name: "shadow_layer", label: "Shadow Layer", type: "image" },
+    { name: "highlight_layer", label: "Highlight Layer", type: "image" },
+    { name: "dpi", label: "Required DPI", type: "number" },
+    { name: "print_file_width", label: "Print File Width (px)", type: "number" },
+    { name: "print_file_height", label: "Print File Height (px)", type: "number" },
+    {
+      name: "printify_placeholder_position",
+      label: "Printify Placeholder Position",
+      type: "text",
+      helpText: "Falls back to the part name if blank.",
+    },
+    {
+      name: "config",
+      label: "Print Area, Safe Area & Bleed",
+      type: "placement",
+      imageField: "base_image",
+      safeAreaField: "safe_area",
+      bleedAreaField: "bleed_area",
+      helpText:
+        "Drag the blue box to move/resize the print area. The green box inside it is the safe area (drag its own corner handle, or the numeric fields below). The amber outline is the bleed — drag its 4 edge handles, or use the numeric fields.",
+    },
+  ];
+}
 
-function PrintifyMappingTab({
+// blueprintImages/blueprintId mirror buildPartFormFields above — the Base Image field can also
+// be set from one of the mapped Printify blueprint's own synced catalogue images instead of an
+// uploaded file. Note these are the same *blueprint-level* catalogue photos as the generic
+// part's own Base Image field, not colour-tagged by Printify — the admin is matching a photo to
+// a colour by eye, not selecting a colour-specific image Printify identified for them.
+function buildColorAssetFormFields(blueprintImages: string[], blueprintId: number | null): AdminFieldSchema[] {
+  return [
+    {
+      name: "color_name",
+      label: "Colour Name",
+      type: "text",
+      required: true,
+      helpText: "Matches the variant colour exactly (case-insensitive), e.g. \"Black\".",
+    },
+    {
+      name: "base_image",
+      label: "Base Image",
+      type: "image",
+      required: true,
+      printifyImages: blueprintImages,
+      printifyBlueprintId: blueprintId ?? undefined,
+    },
+    { name: "mask_image", label: "Mask Image", type: "image" },
+    { name: "displacement_map", label: "Displacement Map", type: "image" },
+    { name: "shadow_layer", label: "Shadow Layer", type: "image" },
+    { name: "highlight_layer", label: "Highlight Layer", type: "image" },
+  ];
+}
+
+function PartDetail({
+  part,
+  blueprintImages,
+  blueprintId,
+  onBack,
+  onUpdated,
+}: {
+  part: MockupTemplatePartRow;
+  blueprintImages: string[];
+  blueprintId: number | null;
+  onBack: () => void;
+  onUpdated: (part: MockupTemplatePartRow) => void;
+}) {
+  const toast = useToast();
+  const [current, setCurrent] = useState(part);
+  const [saved, setSaved] = useState(false);
+  const partFormFields = buildPartFormFields(blueprintImages, blueprintId);
+
+  const handleSubmit = async (payload: Record<string, unknown> | FormData) => {
+    try {
+      const updated = await partCrud.update(current.id, payload as never);
+      setCurrent(updated);
+      onUpdated(updated);
+      setSaved(true);
+      toast.success("Mockup template part updated.");
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : "Save failed.", { title: "Update failed" });
+      throw err;
+    }
+  };
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={onBack}
+        className="mb-5 flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-gray-400 hover:text-white"
+      >
+        <ArrowLeft size={13} />
+        Back to Parts
+      </button>
+
+      <h2 className="mb-4 font-display text-lg font-black uppercase tracking-widest text-white">
+        {PART_NAME_OPTIONS.find((option) => option.value === current.name)?.label ?? current.name} Part
+      </h2>
+
+      <div className="glass-card mb-8 max-w-3xl border-white/10 p-5">
+        {saved && (
+          <div className="mb-4 rounded-xl border border-neon-blue/30 bg-neon-blue/10 px-3 py-2 text-xs text-neon-blue">
+            Saved.
+          </div>
+        )}
+        <AdminResourceForm
+          fields={partFormFields}
+          initialValues={current as unknown as Record<string, unknown>}
+          onSubmit={handleSubmit}
+          onCancel={onBack}
+          submitLabel="Save Changes"
+        />
+      </div>
+
+      <div>
+        <h3 className="mb-3 text-[10px] font-bold uppercase tracking-[0.25em] text-gray-500">
+          Colour-Specific Assets
+        </h3>
+        <p className="mb-4 max-w-2xl text-xs text-gray-500">
+          Override this part's mockup images for a specific product colour — e.g. a different photo
+          for Black vs. White. Reused across every size of that colour. Any field left blank here
+          falls back to this part's own generic asset above. Preview-only — production print files
+          are never affected.
+        </p>
+        <AdminResourceTable
+          title=""
+          crud={colorAssetCrud}
+          searchable={false}
+          modalSize="lg"
+          columns={[
+            {
+              key: "thumbnail",
+              label: "",
+              render: (row) => {
+                const src = resolveAssetUrl(row.base_image);
+                return src ? (
+                  <img src={src} alt="" className="h-10 w-10 rounded-lg border border-white/10 object-cover" />
+                ) : (
+                  <div className="h-10 w-10 rounded-lg border border-white/10 bg-white/5" />
+                );
+              },
+            },
+            { key: "color_name", label: "Colour" },
+          ]}
+          formFields={buildColorAssetFormFields(blueprintImages, blueprintId)}
+          extraListParams={{ part: current.id }}
+          extraCreateValues={{ part: current.id }}
+        />
+      </div>
+    </div>
+  );
+}
+
+export function PrintifyMappingTab({
   template,
   onUpdated,
 }: {
@@ -357,6 +522,22 @@ function TemplateDetail({
   const [tab, setTab] = useState<"details" | "parts" | "printify">("details");
   const [current, setCurrent] = useState(template);
   const [saved, setSaved] = useState(false);
+  const [blueprintImages, setBlueprintImages] = useState<string[]>([]);
+  const [blueprintId, setBlueprintId] = useState<number | null>(null);
+  const [selectedPart, setSelectedPart] = useState<MockupTemplatePartRow | null>(null);
+
+  useEffect(() => {
+    setBlueprintImages([]);
+    setBlueprintId(null);
+    void blueprintCrud.list({ mockup_template: current.id }).then((result) => {
+      const blueprint = result.results[0];
+      if (!blueprint) return;
+      setBlueprintId(blueprint.id);
+      setBlueprintImages((blueprint.images ?? []).filter((img): img is string => typeof img === "string"));
+    });
+  }, [current.id]);
+
+  const partFormFields = buildPartFormFields(blueprintImages, blueprintId);
 
   const handleDetailsSubmit = async (payload: Record<string, unknown> | FormData) => {
     try {
@@ -429,8 +610,16 @@ function TemplateDetail({
         </div>
       ) : tab === "printify" ? (
         <PrintifyMappingTab template={current} onUpdated={handlePrintifyUpdated} />
+      ) : selectedPart ? (
+        <PartDetail
+          part={selectedPart}
+          blueprintImages={blueprintImages}
+          blueprintId={blueprintId}
+          onBack={() => setSelectedPart(null)}
+          onUpdated={setSelectedPart}
+        />
       ) : (
-        <AdminResourceTable
+        <AdminResourceTable<MockupTemplatePartRow>
           title=""
           crud={partCrud}
           searchable={false}
@@ -461,6 +650,7 @@ function TemplateDetail({
           formFields={partFormFields}
           extraListParams={{ template: current.id }}
           extraCreateValues={{ template: current.id }}
+          onEditRow={setSelectedPart}
         />
       )}
     </div>

@@ -9,6 +9,7 @@ import { AdminDialogProvider } from "../../components/admin/AdminDialogProvider.
 import { ToastProvider } from "../../components/admin/ToastProvider.tsx";
 import { ADMIN_HOME_PATH } from "./adminNav.ts";
 import { DashboardPage } from "./resources/DashboardPage.tsx";
+import { ProductWizardPage } from "./resources/ProductWizardPage.tsx";
 import { ProductCategoriesPage } from "./resources/ProductCategoriesPage.tsx";
 import { ProductsPage } from "./resources/ProductsPage.tsx";
 import { MockupTemplatesPage } from "./resources/MockupTemplatesPage.tsx";
@@ -45,6 +46,12 @@ export function AdminApp() {
         <AdminLayout>
           <Routes>
             <Route index element={<DashboardPage />} />
+
+            {/* Deliberately not in adminNav.ts / the sidebar — entry point is the Dashboard's
+                own "Guided Product Creation" button only (see DashboardPage.tsx). It doesn't
+                replace any resource page below; it just sequences their same underlying
+                endpoints into one continuous flow. */}
+            <Route path="product-wizard" element={<ProductWizardPage />} />
 
             <Route path="catalog/categories" element={<ProductCategoriesPage />} />
             <Route path="catalog/products" element={<ProductsPage />} />

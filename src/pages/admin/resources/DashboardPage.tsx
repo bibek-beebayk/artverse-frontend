@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   AlertTriangle,
+  ArrowRight,
   ArrowUpRight,
   Boxes,
   CheckCircle2,
@@ -138,6 +139,30 @@ export function DashboardPage() {
         <div className="glass-card border-neon-pink/30 bg-neon-pink/10 p-6 text-sm text-neon-pink">{error}</div>
       ) : data ? (
         <div className="flex flex-col gap-8">
+          <Link
+            to="/admin/product-wizard"
+            className="glass-card flex flex-wrap items-center justify-between gap-4 border-neon-purple/30 bg-neon-purple/10 p-6 transition-colors hover:bg-neon-purple/20"
+          >
+            <span className="flex items-center gap-4">
+              <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border border-neon-purple/30 bg-neon-purple/10 text-white">
+                <Wand2 size={20} />
+              </span>
+              <span>
+                <span className="block font-display text-base font-black uppercase tracking-widest text-white">
+                  Guided Product Creation
+                </span>
+                <span className="mt-1 block text-xs text-gray-400">
+                  One continuous, step-by-step flow — category through activation — instead of jumping between
+                  admin sections.
+                </span>
+              </span>
+            </span>
+            <span className="flex items-center gap-2 rounded-xl bg-white px-4 py-2.5 text-[10px] font-black uppercase tracking-widest text-cyber-black">
+              Start
+              <ArrowRight size={13} />
+            </span>
+          </Link>
+
           <div>
             <SectionHeading>Products</SectionHeading>
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">

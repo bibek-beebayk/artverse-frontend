@@ -142,6 +142,55 @@ const SECTIONS: GuideSection[] = [
           Upload Artworks, Sync Printify Catalogue, Review Product Issues (pre-filtered to Needs
           Attention), and Review Failed Renders.
         </p>
+        <Callout>
+          <strong className="text-white">Guided Product Creation</strong> — the highlighted banner
+          above the cards starts a step-by-step wizard through the entire product-creation flow in
+          one continuous screen, instead of switching between Catalog, Printify, and Pricing
+          yourself. See the next section.
+        </Callout>
+      </div>
+    ),
+  },
+  {
+    id: "product-wizard",
+    title: "Guided Product Creation",
+    body: (
+      <div className="flex flex-col gap-3 text-xs leading-relaxed text-gray-300">
+        <p>
+          A single continuous flow through everything a sellable product needs — the same steps as
+          the Product Publishing Manual (<Code>docs/ADMIN_GUIDE.md</Code> §10), just presented one
+          after another with no sidebar-switching. Start it from the Dashboard's own banner, or go
+          directly to <Code>/admin/product-wizard</Code>. Completing a step advances you straight to
+          the next one; <strong className="text-white">Back</strong> re-opens the previous step with
+          your choices intact. It doesn't replace any existing screen — every action here calls the
+          exact same admin endpoints those screens already use.
+        </p>
+        <SubHeading>Steps</SubHeading>
+        <Steps
+          items={[
+            "Category — pick an existing one, or create a new one inline.",
+            <>
+              <strong className="text-white">Printify Blueprint</strong> — choose whether this
+              product is Printify-fulfilled at all. Picking a blueprint pulls in providers,
+              variants, and placeholder positions automatically later in the flow; skipping switches
+              every later step to a manual equivalent (variants added by hand instead of synced).
+            </>,
+            "Mockup Template — name, product type, description, supported colours/sizes/formats.",
+            "Template Parts — add at least a Front part (Back/sleeves too, if this product prints there), with its base image and placement.",
+            "Map Blueprint & Select Provider — skipped entirely on the manual path. Maps the chosen blueprint to the new template, then reuses the exact same provider-selection screen and per-part compatibility table as the Mockup Templates page's own Printify Mapping tab.",
+            "Activate Template — reviews parts/provider, then activates.",
+            "Product — name, description, optional photo; category and mockup template are already decided, so they're shown as context, not re-asked.",
+            "Variants — Sync Printify Variants (Printify path) or Add Variant (manual path), plus inline production-cost editing and a Set Base Cost For All bulk action.",
+            "Pricing — shows whether a Global/Category rule already applies; optionally add a product-specific override. Never blocks — pricing rules aren't required to activate a product.",
+            "Activate — shows the same readiness badge/issues as the Products page, then activates.",
+          ]}
+        />
+        <Callout tone="warning">
+          The wizard is for <strong className="text-white">creating</strong> a new product start to
+          finish. To edit an existing one, or to do anything past activation (customer-facing
+          verification, saved designs, cart), use the regular Catalog/Printify/Pricing screens or
+          §10.19 onward of <Code>docs/ADMIN_GUIDE.md</Code>.
+        </Callout>
       </div>
     ),
   },
@@ -222,7 +271,15 @@ const SECTIONS: GuideSection[] = [
             nested inside it is the safe area (drag its own corner handle, or use the numeric %
             fields), and the amber outline is the bleed (drag its 4 independent edge handles, or
             use the numeric px fields). This is exactly what a customer sees as guide lines while
-            positioning their design.
+            positioning their design. Click a part row to open its own detail page, which also
+            lists <strong className="text-white">Colour-Specific Assets</strong> below the part's
+            form — one row per colour whose photo genuinely looks different (e.g. Black vs. White),
+            reused across every size of that colour. Any field left blank on a colour row falls
+            back to the part's own generic image for that field, and a part with no colour rows at
+            all behaves exactly as before this existed. A colour row's Base Image can also be
+            picked from the mapped Printify blueprint's synced catalogue images, same as the
+            part's own Base Image field — note Printify doesn't tag those photos by colour, so
+            you're matching one to a colour by eye.
           </li>
           <li>
             <strong className="text-white">Printify Mapping</strong> — shows the blueprint mapped

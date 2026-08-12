@@ -282,6 +282,20 @@ export interface GeneratedArtwork {
   availableProducts: AvailableMockupProduct[];
 }
 
+/** A colour-specific override of a part's preview mockup images — e.g. Front+Black vs.
+ * Front+White. Reused across every size of that colour; matching against `colorName` is
+ * case-insensitive. Any field left null here falls back to the parent part's own generic
+ * asset (see resolveActivePartAssets in Customization.tsx). Preview-only, like the part's own
+ * image fields — never affects production print files. */
+export interface MockupTemplatePartColorAsset {
+  id: number;
+  colorName: string;
+  baseImage: string | null;
+  maskImage: string | null;
+  shadowLayer: string | null;
+  highlightLayer: string | null;
+}
+
 export interface MockupTemplatePart {
   id: number;
   name: string;
@@ -289,6 +303,7 @@ export interface MockupTemplatePart {
   maskImage: string | null;
   shadowLayer: string | null;
   highlightLayer: string | null;
+  colorAssets?: MockupTemplatePartColorAsset[];
   config: Record<string, unknown>;
   /** Required print resolution (pixels per inch) for this print area. */
   dpi: number;

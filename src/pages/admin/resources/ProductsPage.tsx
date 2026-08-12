@@ -21,15 +21,15 @@ import { adminAction, makeAdminCrud } from "../../../lib/adminApi.ts";
 import { ApiError, resolveAssetUrl } from "../../../lib/api.ts";
 import { cn } from "../../../lib/utils.ts";
 
-type ReadyStatus = "ready" | "needs_attention" | "inactive_draft";
+export type ReadyStatus = "ready" | "needs_attention" | "inactive_draft";
 
-interface ProductReadiness {
+export interface ProductReadiness {
   is_ready: boolean;
   status: ReadyStatus;
   issues: string[];
 }
 
-interface ProductRow {
+export interface ProductRow {
   id: number;
   name: string;
   slug: string;
@@ -91,7 +91,7 @@ const READY_STATUS_CLASS: Record<ReadyStatus, string> = {
   inactive_draft: "border-white/10 bg-white/5 text-gray-400",
 };
 
-function ReadinessBadge({ readiness }: { readiness: ProductReadiness }) {
+export function ReadinessBadge({ readiness }: { readiness: ProductReadiness }) {
   const [open, setOpen] = useState(false);
   return (
     <div className="relative inline-block">

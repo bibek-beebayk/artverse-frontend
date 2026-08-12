@@ -14,6 +14,7 @@ import type {
   MockupRender,
   MockupTemplate,
   MockupTemplatePart,
+  MockupTemplatePartColorAsset,
   PaginatedArtworks,
   PaginatedProducts,
   PlacementOverride,
@@ -130,6 +131,16 @@ function mapSourceDesignAsset(asset: BackendSourceDesignAsset): SourceDesignAsse
   };
 }
 
+interface BackendMockupTemplatePartColorAsset {
+  id: number;
+  color_name: string;
+  base_image: string | null;
+  mask_image: string | null;
+  displacement_map: string | null;
+  shadow_layer: string | null;
+  highlight_layer: string | null;
+}
+
 interface BackendMockupTemplatePart {
   id: number;
   name: string;
@@ -138,6 +149,7 @@ interface BackendMockupTemplatePart {
   displacement_map: string | null;
   shadow_layer: string | null;
   highlight_layer: string | null;
+  color_assets?: BackendMockupTemplatePartColorAsset[];
   config: Record<string, unknown>;
   dpi: number;
   safe_area: { left: number; top: number; width: number; height: number } | Record<string, never>;
@@ -503,6 +515,19 @@ function mapProduct(product: BackendProduct): Product {
   };
 }
 
+function mapMockupTemplatePartColorAsset(
+  asset: BackendMockupTemplatePartColorAsset
+): MockupTemplatePartColorAsset {
+  return {
+    id: asset.id,
+    colorName: asset.color_name,
+    baseImage: resolveAssetUrl(asset.base_image),
+    maskImage: resolveAssetUrl(asset.mask_image),
+    shadowLayer: resolveAssetUrl(asset.shadow_layer),
+    highlightLayer: resolveAssetUrl(asset.highlight_layer),
+  };
+}
+
 function mapMockupTemplatePart(part: BackendMockupTemplatePart): MockupTemplatePart {
   return {
     id: part.id,
@@ -511,6 +536,7 @@ function mapMockupTemplatePart(part: BackendMockupTemplatePart): MockupTemplateP
     maskImage: resolveAssetUrl(part.mask_image),
     shadowLayer: resolveAssetUrl(part.shadow_layer),
     highlightLayer: resolveAssetUrl(part.highlight_layer),
+    colorAssets: (part.color_assets || []).map(mapMockupTemplatePartColorAsset),
     config: part.config,
     dpi: part.dpi,
     safeArea:

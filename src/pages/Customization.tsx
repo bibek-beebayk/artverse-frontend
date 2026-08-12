@@ -986,8 +986,27 @@ export function Customization() {
     if (!customization?.templateParts) {
       return null;
     }
-    return customization.templateParts.find((part) => part.name === activePart) ?? null;
-  }, [customization, activePart]);
+    const part = customization.templateParts.find((p) => p.name === activePart) ?? null;
+    if (!part) {
+      return null;
+    }
+    // Selected Variant Colour + Active Template Part -> colour-specific mockup assets ->
+    // fallback to the part's own generic assets. Reused across every size of that colour —
+    // this only keys on colour, never size, so changing size alone never changes these.
+    const colorAsset = selectedColour
+      ? part.colorAssets?.find((asset) => asset.colorName.toLowerCase() === selectedColour.toLowerCase())
+      : undefined;
+    if (!colorAsset) {
+      return part;
+    }
+    return {
+      ...part,
+      baseImage: colorAsset.baseImage ?? part.baseImage,
+      maskImage: colorAsset.maskImage ?? part.maskImage,
+      shadowLayer: colorAsset.shadowLayer ?? part.shadowLayer,
+      highlightLayer: colorAsset.highlightLayer ?? part.highlightLayer,
+    };
+  }, [customization, activePart, selectedColour]);
 
   // Product-view system: which print areas does the currently selected colour/size actually
   // support? Only fetched for real storefront products (productId set) — template-only flows

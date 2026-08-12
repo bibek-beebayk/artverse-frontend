@@ -19,6 +19,10 @@ interface BlueprintRow {
   title: string;
   brand: string;
   model: string;
+  /** Printify's own catalogue/marketing photos for this blueprint (synced as-is, unvalidated
+   * shape) — generic stock photos of the blank product, not necessarily a clean flat product
+   * shot suitable for a MockupTemplatePart's base_image without cropping/review first. */
+  images: unknown[];
   mockup_template: number | null;
   is_mapped: boolean;
   provider_count: number;
@@ -271,8 +275,37 @@ function BlueprintExpansion({ blueprintId, onProviderSelected }: { blueprintId: 
     );
   }
 
+  const catalogImages = (detail.images ?? []).filter((img): img is string => typeof img === "string");
+
   return (
     <div>
+      {catalogImages.length > 0 && (
+        <div className="border-b border-white/10 px-4 py-3">
+          <div className="mb-2 text-[10px] font-bold uppercase tracking-widest text-gray-400">
+            Catalog Images ({catalogImages.length})
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {catalogImages.map((url, index) => (
+              <a
+                key={url + index}
+                href={url}
+                target="_blank"
+                rel="noreferrer"
+                title="Open full size"
+                className="h-16 w-16 shrink-0 overflow-hidden rounded-lg border border-white/10 hover:border-neon-blue/50"
+              >
+                <img src={url} alt="" className="h-full w-full object-cover" />
+              </a>
+            ))}
+          </div>
+          <p className="mt-2 text-[10px] leading-relaxed text-gray-500">
+            Printify's own catalogue photos for this blueprint — reference only, not necessarily a
+            clean flat product shot. You can also pick one of these directly as a Mockup Template
+            part's Base Image, on the part's Base Image field.
+          </p>
+        </div>
+      )}
+
       {!detail.mockup_template && (
         <div className="px-4 py-3 text-[10px] text-gray-500">
           Map this blueprint to a mockup template (via the Map action) before you can select a provider for it.

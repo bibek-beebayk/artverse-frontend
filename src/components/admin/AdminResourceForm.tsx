@@ -46,6 +46,12 @@ export interface AdminFieldSchema {
    * that overlay's UI. */
   safeAreaField?: string;
   bleedAreaField?: string;
+  /** "image" fields only — offers these already-synced Printify blueprint catalogue image URLs
+   * as an alternative to uploading a file (e.g. a mapped blueprint's `images`). Requires
+   * `printifyBlueprintId` — the form submits the *index* of whichever one is picked, not the raw
+   * URL, so the backend can re-resolve it from its own trusted, already-synced data. */
+  printifyImages?: string[];
+  printifyBlueprintId?: number;
 }
 
 interface AdminResourceFormProps {
@@ -108,6 +114,9 @@ export function AdminResourceForm({ fields, initialValues, onSubmit, onCancel, s
   });
   const [imageFiles, setImageFiles] = useState<Record<string, File>>({});
   const [imagePreviewUrls, setImagePreviewUrls] = useState<Record<string, string>>({});
+  // Field name -> index into that field's printifyImages — mutually exclusive with imageFiles for
+  // the same field (picking one clears the other, see setImageField/selectPrintifyImage below).
+  const [printifySelections, setPrintifySelections] = useState<Record<string, number>>({});
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -130,6 +139,29 @@ export function AdminResourceForm({ fields, initialValues, onSubmit, onCancel, s
       if (prev[name]) URL.revokeObjectURL(prev[name]);
       return { ...prev, [name]: URL.createObjectURL(file) };
     });
+    setPrintifySelections((prev) => {
+      if (!(name in prev)) return prev;
+      const next = { ...prev };
+      delete next[name];
+      return next;
+    });
+  };
+
+  const selectPrintifyImage = (name: string, index: number) => {
+    setImageFiles((prev) => {
+      if (!(name in prev)) return prev;
+      const next = { ...prev };
+      delete next[name];
+      return next;
+    });
+    setImagePreviewUrls((prev) => {
+      if (!(name in prev)) return prev;
+      URL.revokeObjectURL(prev[name]);
+      const next = { ...prev };
+      delete next[name];
+      return next;
+    });
+    setPrintifySelections((prev) => ({ ...prev, [name]: index }));
   };
 
   // Shared by the image field's own preview and any "placement" field's imageField reference —
@@ -154,7 +186,12 @@ export function AdminResourceForm({ fields, initialValues, onSubmit, onCancel, s
           if (field.readOnly) continue;
           if (field.type === "image") {
             const file = imageFiles[field.name];
-            if (file) formData.append(field.name, file);
+            if (file) {
+              formData.append(field.name, file);
+            } else if (printifySelections[field.name] !== undefined && field.printifyBlueprintId !== undefined) {
+              formData.append("printify_blueprint_id", String(field.printifyBlueprintId));
+              formData.append("printify_image_index", String(printifySelections[field.name]));
+            }
             continue;
           }
           const value = values[field.name];
@@ -175,7 +212,14 @@ export function AdminResourceForm({ fields, initialValues, onSubmit, onCancel, s
       } else {
         const payload: Record<string, unknown> = {};
         for (const field of fields) {
-          if (field.readOnly || field.type === "image") continue;
+          if (field.readOnly) continue;
+          if (field.type === "image") {
+            if (printifySelections[field.name] !== undefined && field.printifyBlueprintId !== undefined) {
+              payload.printify_blueprint_id = field.printifyBlueprintId;
+              payload.printify_image_index = printifySelections[field.name];
+            }
+            continue;
+          }
           let value = values[field.name];
           if (field.type === "number" || field.type === "decimal") {
             value = value === "" ? null : Number(value);
@@ -317,35 +361,71 @@ export function AdminResourceForm({ fields, initialValues, onSubmit, onCancel, s
           )}
 
           {field.type === "image" && (
-            <div className="flex items-center gap-3">
-              {imagePreviewUrls[field.name] ? (
-                <div className="flex flex-col items-center gap-1">
-                  <img
-                    src={imagePreviewUrls[field.name]}
-                    alt=""
-                    className="h-14 w-14 rounded-lg border border-neon-blue/40 object-cover"
-                  />
-                  <span className="text-[9px] font-bold uppercase tracking-widest text-neon-blue">New</span>
+            <div className="flex flex-col gap-3">
+              <div className="flex items-center gap-3">
+                {printifySelections[field.name] !== undefined && field.printifyImages ? (
+                  <div className="flex flex-col items-center gap-1">
+                    <img
+                      src={field.printifyImages[printifySelections[field.name]]}
+                      alt=""
+                      className="h-14 w-14 rounded-lg border border-neon-blue/40 object-cover"
+                    />
+                    <span className="text-[9px] font-bold uppercase tracking-widest text-neon-blue">Printify</span>
+                  </div>
+                ) : imagePreviewUrls[field.name] ? (
+                  <div className="flex flex-col items-center gap-1">
+                    <img
+                      src={imagePreviewUrls[field.name]}
+                      alt=""
+                      className="h-14 w-14 rounded-lg border border-neon-blue/40 object-cover"
+                    />
+                    <span className="text-[9px] font-bold uppercase tracking-widest text-neon-blue">New</span>
+                  </div>
+                ) : typeof initialValues?.[field.name] === "string" && initialValues[field.name] ? (
+                  <div className="flex flex-col items-center gap-1">
+                    <img
+                      src={resolveAssetUrl(initialValues[field.name] as string)}
+                      alt=""
+                      className="h-14 w-14 rounded-lg border border-white/10 object-cover"
+                    />
+                    <span className="text-[9px] font-bold uppercase tracking-widest text-gray-500">Current</span>
+                  </div>
+                ) : null}
+                <input
+                  type="file"
+                  accept="image/*"
+                  className="flex-1 text-xs text-gray-400 file:mr-3 file:rounded-lg file:border-0 file:bg-white/10 file:px-3 file:py-2 file:text-[10px] file:font-bold file:uppercase file:tracking-widest file:text-white"
+                  onChange={(event) => {
+                    const file = event.target.files?.[0];
+                    if (file) setImageField(field.name, file);
+                  }}
+                />
+              </div>
+
+              {field.printifyImages && field.printifyImages.length > 0 && (
+                <div>
+                  <div className="mb-1.5 text-[9px] font-bold uppercase tracking-widest text-gray-500">
+                    Or use a Printify catalog image
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {field.printifyImages.map((url, index) => (
+                      <button
+                        key={url + index}
+                        type="button"
+                        onClick={() => selectPrintifyImage(field.name, index)}
+                        className={cn(
+                          "h-14 w-14 shrink-0 overflow-hidden rounded-lg border-2 transition-colors",
+                          printifySelections[field.name] === index
+                            ? "border-neon-blue"
+                            : "border-white/10 hover:border-white/30",
+                        )}
+                      >
+                        <img src={url} alt="" className="h-full w-full object-cover" />
+                      </button>
+                    ))}
+                  </div>
                 </div>
-              ) : typeof initialValues?.[field.name] === "string" && initialValues[field.name] ? (
-                <div className="flex flex-col items-center gap-1">
-                  <img
-                    src={resolveAssetUrl(initialValues[field.name] as string)}
-                    alt=""
-                    className="h-14 w-14 rounded-lg border border-white/10 object-cover"
-                  />
-                  <span className="text-[9px] font-bold uppercase tracking-widest text-gray-500">Current</span>
-                </div>
-              ) : null}
-              <input
-                type="file"
-                accept="image/*"
-                className="flex-1 text-xs text-gray-400 file:mr-3 file:rounded-lg file:border-0 file:bg-white/10 file:px-3 file:py-2 file:text-[10px] file:font-bold file:uppercase file:tracking-widest file:text-white"
-                onChange={(event) => {
-                  const file = event.target.files?.[0];
-                  if (file) setImageField(field.name, file);
-                }}
-              />
+              )}
             </div>
           )}
 
